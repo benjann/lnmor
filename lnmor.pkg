@@ -1,0 +1,8 @@
+v 3
+d lnmor: Stata module to compute marginal odds ratios after model estimation
+d 
+d Author: Ben Jann, University of Bern, ben.jann@unibe.ch
+d
+d Distribution-Date: 20220818
+f lnmor.ado
+f lnmor.sthlp
