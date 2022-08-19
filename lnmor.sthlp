@@ -1,5 +1,5 @@
 {smcl}
-{* 17aug2022}{...}
+{* 19aug2022}{...}
 {hi:help lnmor}{...}
 {right:{browse "http://github.com/benjann/lnmor/"}}
 {hline}
@@ -21,8 +21,10 @@
 {marker opt}{synopthdr:options}
 {synoptline}
 {syntab :Main}
-{synopt:{cmdab:over(}{help varname:{it:overvar}}{cmd:)}}compute results
-    across levels of {it:overvar}
+{synopt:{cmdab:at(}{help lnmor##at:{it:spec}}{cmd:)}}estimate results at
+    specified values of covariates
+    {p_end}
+{synopt :{opt atmax(#)}}maximum number of levels allowed in {cmd:at()}
     {p_end}
 {synopt :{opt kmax(#)}}maximum number of levels before coarsening
     kicks in; default is {cmd:kmax(100)}
@@ -76,10 +78,24 @@
 
 {title:Options}
 
+{marker at}{...}
 {phang}
-    {opt over(overvar)} reports results by levels of {it:overvar}. These results
-    are not subpopulation estimates; they correspond to marginal odds ratios if
-    {it:overvar} is set to a specific level for the whole population.
+    {opt at(spec)} reports results with covariates fixed at specific values. The
+    syntax of {it:spec} is
+
+            {varname} {cmd:=} {it:{help numlist}} [{varname} {cmd:=} {it:{help numlist}} ...]
+
+{pmore}
+    Computations will be repeated for all combinations of specified values. You
+    can also type {opth at(varlist)} in which case 
+    the levels found in the data will be used. In any case, the variables specified
+    in {cmd:at()} must be different from the variables specified in the main
+    {it:varlist}. Furthermore, only variables that appear as covariates
+    in the original model are allowed.
+
+{phang}
+    {opt atmax(#)} sets the maximum number of (combinations of) values that is
+    allowed in {cmd:at()}. The default is {cmd:atmax(50)}.
 
 {phang}
     {opt kmax(#)} sets the maximum number of levels (distinct values) that are
@@ -91,17 +107,28 @@
     {opt nodots} suppresses the progress dots.
 
 {phang}
-    {opt post} stores results in {cmd:e()} rather than in {cmd:r()}.
+    {opt post} stores results in {cmd:e()} rather than in {cmd:r()}. {cmd:post}
+    has no effect of {cmd:vce(bootstrap)} or {cmd:vce(jackknife)} is specified
+    (results will always be stored in {cmd:e()} in these cases).
 
 {marker vcetype}{...}
 {phang}
     {cmd:vce(}{it:vcetype}{cmd:)} specifies the variance estimation method. The
     default is to compute robust standard errors based on influence functions (taking
-    account of clustering if the original model included clustering). Use option
+    account of clustering if the original model includes clustering). Use option
     {cmd:vce()} to request replication-based standard errors; {it:vcetype} may be
     {cmdab:boot:strap} or {cmdab:jack:knife}; see {it:{help vce_option}}. If replication-based
     standard errors are requested, {cmd:lnmor} will reestimate the original model
     within replications.
+
+{pmore}
+    For clarification, if you want to obtain replication-based standard errors, must specify
+    {cmd:vce(bootstrap)} or {cmd:vce(jackknife)} with {cmd:lnmor}, not with the
+    the original command. Specifying {cmd:vce(bootstrap)} or
+    {cmd:vce(jackknife)} with the original model will have no effect on the
+    results by {cmd:lnmor} (apart from clustering being picked up, if
+    relevant). That is, the replication-based variance matrix of the original
+    model is not used in the computations by {cmd:lnmor}.
 
 {phang}
     {opt nose} suppresses calculation of the VCE and standard errors. The
@@ -167,16 +194,16 @@
         . {stata lnmor i.smoke i.race age lwt, or}
 
 {pstd}
-    Use option {cmd:over()} to explore interactions:
+    Use option {cmd:at()} to explore interactions:
 
         . {stata logit low i.smoke i.race age lwt ptl ht ui i.smoke#i.race, or}
-        . {stata lnmor i.smoke, over(race) or}
+        . {stata lnmor i.smoke, at(race) or}
 
 {pstd}
     Use use {cmd:ibn.}{it:varname} to obtain marginal odds by level rather than odds ratios:
 
         . {stata logit low i.smoke i.race age lwt ptl ht ui i.smoke#i.race, or}
-        . {stata lnmor ibn.smoke, over(race) or}
+        . {stata lnmor ibn.smoke, at(race) or}
 
 {pstd}
     For categorical predictors, a combination of {helpb margins} and {helpb nlcom}
@@ -213,9 +240,7 @@
 {synopt:{cmd:r(term}{it:#}{cmd:)}}specification of term {it:#}{p_end}
 {synopt:{cmd:r(name}{it:#}{cmd:)}}variable name of term {it:#}{p_end}
 {synopt:{cmd:r(type}{it:#}{cmd:)}}{cmd:variable} or {cmd:factor}; type of term {it:#}{p_end}
-{synopt:{cmd:r(over)}}name of {it:overvar}{p_end}
-{synopt:{cmd:r(over_namelist)}}levels of {it:overvar}{p_end}
-{synopt:{cmd:r(over_labels)}}label of levels of {it:overvar}{p_end}
+{synopt:{cmd:r(atnames)}}variable names from {cmd:at()}{p_end}
 {synopt:{cmd:r(wtype)}}weight type{p_end}
 {synopt:{cmd:r(wexp)}}weight expression{p_end}
 {synopt:{cmd:r(clustvar)}}name of cluster variable{p_end}
@@ -226,11 +251,15 @@
 {p2col 5 23 26 2: Matrices}{p_end}
 {synopt:{cmd:r(b)}}coefficient vector{p_end}
 {synopt:{cmd:r(V)}}variance-covariance matrix of the estimators{p_end}
+{synopt:{cmd:r(at)}}matrix of values from {cmd:at()}{p_end}
 {synopt:{cmd:r(levels}{it:#}{cmd:)}}values and counts of levels of term {it:#}{p_end}
 
 {pstd}
-If {cmd:post} is specified, results are stored in {cmd:e()} rather than {cmd:r()}, and
-function {cmd:e(sample)} that marks the estimation sample is added.
+If {cmd:post} is specified, results are stored in {cmd:e()} rather than
+{cmd:r()}, and function {cmd:e(sample)} that marks the estimation sample is
+added. Results are also stored in {cmd:e()} in case of {cmd:vce(bootstrap)}
+or {cmd:vce(jackknife)} (along with the results stored by {helpb bootstrap}
+or {helpb jackknife}).
 
 
 {title:Methods and Formulas}

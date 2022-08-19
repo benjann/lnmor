@@ -1,4 +1,4 @@
-*! version 1.0.0  18aug2022  Ben Jann
+*! version 1.0.1  19aug2022  Ben Jann
 
 program lnmor
     version 14
@@ -148,7 +148,6 @@ program _postrtoe, eclass
     foreach r of local rmacros {
         eret local `r' `"`r(`r')'"'
     }
-    if "`all'"=="" exit
     // matrices
     local rmatrices: r(matrices)
     local drop b V
@@ -172,8 +171,22 @@ program Display
         else if d(`c(born_date)')<d(13jul2021) local headopts
         _coef_table_header, `headopts'
         di as txt _col(`c1') "Command" _col(`c2') "= " as res %`w2's e(est_cmd)
-        if `"`e(over)'"'!="" _svy_summarize_legend
-        else di ""
+        if `"`e(atvars)'"'!="" {
+            di ""
+            local atvars `"`e(atvars)'"'
+            local K = e(k_eq)
+            forv i = 1/`K' {
+                di as res "`i'" as txt ": " _c
+                local j 0
+                foreach v of local atvars {
+                    if `j' di as txt ", " _c
+                    local ++j
+                    di as txt "`v' = " as res el(e(at), `i',`j') _c
+                }
+                di ""
+            }
+        }
+        di ""
     }
     eret di, `eform' `options'  // eform does not seem to work if e(V) is missing
 end
@@ -181,7 +194,7 @@ end
 program _lnmor, rclass
     syntax varlist(numeric fv) [, /*
         */ kmax(numlist int max=1 >1 missingokay) /*
-        */ over(varname numeric) noDOTs NOSE noHEADer /*
+        */ at(passthru) atmax(int 50) noDOTs NOSE noHEADer /*
         */ IFGENerate(str) replace * ]
     
     // collect diopts
@@ -191,13 +204,16 @@ program _lnmor, rclass
     // default kmax
     if "`kmax'"=="" local kmax 100
     
-    // preserve model and select sample
+    // collect some info on original model
     local est_N       = e(N)
     local est_cmd     `"`e(cmd)'"'
     local clustvar    `"`e(clustvar)'"'
     if `"`clustvar'"'!="" {
         local vceopt vce(cluster `clustvar')
     }
+    _collect_model_info // returns mvars, mnames, mcons, mk
+    
+    // preserve model and select sample
     tempname ecurrent
     _estimates hold `ecurrent', restore copy
     preserve
@@ -219,38 +235,44 @@ program _lnmor, rclass
     
     // process varlist / determine levels
     fvexpand `varlist'
-    _collect_fvinfo `r(varlist)' // returns nterms, term#, type#, name#, bn#
+    _collect_fvinfo `r(varlist)' // returns names, nterms, term#, type#, name#, bn#
+    local tmp: list dups names
+    if `"`tmp'"'!="" {
+        di as error "inconsistent varlist; duplicate variables not allowed"
+        exit 198
+    }
+    local tmp: list names - mnames
+    if `"`tmp'"'!="" {
+        gettoken tmp : tmp
+        di as error "{bf:`tmp'} not found in list of covariates"
+        exit 111
+    }
     forv j = 1/`nterms' {
         tempname levels`j'
         mata: _get_levels("`j'") // fills in levels#, returns k#, cname#
         mat coln `levels`j'' = "value" "count"
     }
     
-    // over
-    if "`over'"!="" {
-        local hasover 1
-        qui levelsof `over'
-        local olevels "`r(levels)'"
-        foreach o of local olevels {
-            local olab: label (`over') `o'
-            local olabels `"`olabels' `"`olab'"'"'
+    // at
+    tempname AT
+    _parse_at `AT', `at' atmax(`atmax') mnames(`mnames') // returns AT, K, at
+    local hasat = `"`at'"'!=""
+    if `hasat' {
+        local tmp: list at & names
+        if `"`tmp'"'!="" {
+            di as error "{it:varlist} and {bf:at()} must be distinct"
+            exit 198
         }
-        local olabels: list clean olabels
-    }
-    else {
-        local hasover 0
-        local olevels .
     }
     
     // prepare VCE
     local vce = "`nose'"==""
     if `vce' {
         // tempvars for outcome IFs
-        local k 0
-        foreach o of local olevels {
-            local ++k
+        forv k = 1 / `K' {
             forv j = 1/`nterms' {
-                mata: _mktmpnames("IF`j'_`k'", "`type`j''"=="factor" ? `k`j'' : 1)
+                mata: _mktmpnames("IF`j'_`k'", "`type`j''"=="factor" ? ///
+                    `: list sizeof term`j'' : 1)
                 local IFs `IFs' `IF`j'_`k''
             }
         }
@@ -259,23 +281,26 @@ program _lnmor, rclass
             _parse_ifgenerate `"`ifgenerate'"' `:list sizeof IFs' `replace'
         }
         // optain model IFs
-        mata: _mktmpnames("mIFs", cols(st_matrix("e(b)")))
-        _get_model_IF `mIFs' // returns mvars, mcons
+        mata: _mktmpnames("mIFs", `mk')
+        _get_model_IF `mcons' "`mvars'" "`mIFs'"
     }
     else local ifgenerate
     
     // compute marginal ORs
     if "`dots'"=="" di as txt "(" _c
-    if `hasover' tempname B
+    if `hasat' tempname B
     local k 0
     tempname b
     tempvar name0
-    foreach o of local olevels {
-        local ++k
-        if `hasover' {
-            if "`dots'"=="" {
-                if `k'>1 di ";" _c
-                di as txt "`over'=`o':" _c
+    forv k = 1 / `K' {
+    // foreach o of local olevels {
+        // local ++k
+        if `hasat' {
+            if "`dots'"=="" di as txt "`k':" _c
+            local j 0
+            foreach v of local at {
+                local ++j
+                qui replace `v' = `AT'[`k', `j']
             }
         }
         forv j = 1/`nterms' {
@@ -286,23 +311,21 @@ program _lnmor, rclass
             if "`dots'"=="" di as txt "`name`j''" _c
             __lnmor [`weight'`exp'], term(`term`j'') type(`type`j'') /*
                 */ name(`name`j'') bn(`bn`j'') levels(`levels`j'') /*
-                */ k(`k`j'') over(`over') olevel(`o') /*
-                */ wvar(`wvar') ifs(`IF`j'_`k'') mifs(`mIFs') /*
-                */  mvars(`mvars') mcons(`mcons') estcmd(`est_cmd') `dots'
+                */ k(`k`j'') wvar(`wvar') ifs(`IF`j'_`k'') mifs(`mIFs') /*
+                */ mvars(`mvars') mcons(`mcons') estcmd(`est_cmd') `dots'
             matrix `b' = nullmat(`b'), r(b)
             if "`cname`j''"!="`name`j''" {
                 rename `name`j'' `cname`j''
                 rename `name0' `name`j''
             }
         }
-        if `hasover' {
-            matrix coleq `b' = "`o'"
+        if `hasat' {
+            matrix coleq `b' = "`k'"
             matrix `B' = nullmat(`B'), `b'
             matrix drop `b'
         }
     }
-    if `hasover' local b `B'
-    local K `k' // number of equations in b
+    if `hasat' local b `B'
     if "`dots'"=="" di as txt "done)"
     
     // returns
@@ -355,10 +378,9 @@ program _lnmor, rclass
         return scalar k`j'      = `k`j''
         return matrix levels`j' = `levels`j''
     }
-    if `hasover' {
-        return local over          "`over'"
-        return local over_namelist "`olevels'"
-        return local over_labels   `"`olabels'"'
+    if `hasat' {
+        return local atvars        "`at'"
+        return matrix at           = `AT'
     }
     if `vce' {
         return local clustvar `"`clustvar'"'
@@ -385,22 +407,128 @@ program _lnmor, rclass
     }
 end
 
+program _collect_model_info
+    _ms_lf_info
+    c_local mk    `r(k1)'
+    c_local mcons `r(cons1)'
+    c_local mvars `r(varlist1)'
+    local names
+    foreach t in `r(varlist1)' {
+        _ms_parse_parts `t'
+        local names `names' `r(name)'
+    }
+    c_local mnames: list uniq names
+end
+
+program _parse_at
+    syntax anything(name=AT), atmax(str) [ at(str) mnames(str) ]
+    // no at() option
+    if `"`at'"'=="" {
+        c_local AT ""
+        c_local at ""
+        c_local K 1
+        exit
+    }
+    // case 1: varnam = numlist [varname = numlist ...]
+    local haseq = strpos(`"`at'"', "=")
+    if `haseq' {
+        local j 0
+        while (`"`at'"'!="") {
+            gettoken t at : at, parse(" =")
+            if `"`t'"'=="=" {
+                if `j'==0 {
+                    if `"`lag'"'=="" | `"`lag2'"'!="" {
+                        di as err "invalid specification of {bf:at()}"
+                        exit 198
+                    }
+                }
+                local levels`j' `"`lag2'"'
+                local ++j
+                local at`j' `"`lag'"'
+                local lag2
+                local lag
+                local space
+                continue
+            }
+            if `"`lag'"'!="" {
+                local lag2 `"`lag2'`space'`lag'"'
+                local space " "
+            }
+            local lag `"`t'"'
+        }
+        if `"`lag'"'!="" {
+            local lag2 `"`lag2'`space'`lag'"'
+        }
+        local levels`j' `"`lag2'"'
+        loca J `j'
+        local at0
+        local K 1
+        forv j=1/`J' {
+            local 0 `"`at`j'', at(`levels`j'')"'
+            capt n syntax varname, at(numlist sort)
+            if _rc==1 exit _rc
+            if _rc {
+                di as err "invalid specification of {bf:at()}"
+                exit 198
+            }
+            local at0 `at0' `varlist'
+            local at`j' `varlist'
+            local levels`j' `at'
+            local k`j': list sizeof at
+            local K = `K' * `k`j''
+        }
+        local at `at0'
+    }
+    // case 2: varlist
+    else {
+        local 0 `"`at'"'
+        syntax varlist
+        local at `varlist'
+        local J: list sizeof at
+        local K .
+    }
+    // checks
+    local tmp: list dups at
+    if `"`tmp'"'!="" {
+        di as error "duplicate variables not allowed in {bf:at()}"
+        exit 198
+    }
+    local tmp: list at - mnames
+    if `"`tmp'"'!="" {
+        gettoken tmp : tmp
+        di as error "{bf:`tmp'} not found in list of covariates"
+        exit 111
+    }
+    // create matrix of 
+    mata: _at_expand(`K', `J', `atmax')
+    mat coln `AT' = `at'
+    c_local at `at'
+    c_local K `K'
+end
+
 program _collect_fvinfo
     local J 0
     local name
     local bn 1
+    local next 1
     foreach t of local 0 {
          _ms_parse_parts `t'
          if !inlist("`r(type)'", "variable", "factor") {
              di as err "`r(type)' terms not allowed in {it:varlist}"
              exit 198
          }
-         if "`r(name)'"!="`name'" {
+         if      "`r(type)'"=="variable" local next 1
+         else if "`r(name)'"!="`name'"   local next 1
+         else if "`r(type)'"!="`type'"   local next 1
+         else local next 0
+         if `next' {
              if `J' {
+                 _collect_fvinfo_bn "`type'" "`term'" `bn'
                  c_local term`J' "`term'"
                  c_local type`J' "`type'"
                  c_local name`J' "`name'"
-                 c_local bn`J'   "`bn'"
+                 c_local bn`J'   `bn'
+                 local names `names' `name'
              }
              local term
              local type
@@ -413,11 +541,28 @@ program _collect_fvinfo
          local name `r(name)'
          if r(base)==1 local bn 0
     }
+     _collect_fvinfo_bn "`type'" "`term'" `bn'
     c_local term`J' "`term'"
     c_local type`J' "`type'"
     c_local name`J' "`name'"
-    c_local bn`J'   "`bn'"
+    c_local bn`J'   `bn'
+    local names `names' `name'
+    c_local names   `names'
     c_local nterms   `J'
+end
+
+program _collect_fvinfo_bn
+    args type term bn
+    if "`type'"!="factor" {
+        // non-factor variable cannot have bn
+        c_local bn 0
+        exit
+    }
+    if !`bn' exit
+    // check bn status in case of single
+    if `: list sizeof term'>1 exit
+    if substr("`term'", strpos("`term'",".")-2,2)=="bn" exit
+    c_local bn 0
 end
 
 program _parse_ifgenerate
@@ -445,19 +590,14 @@ end
 program __lnmor, rclass
     syntax [fw iw pw], /*
         */ term(str) type(str) name(str) bn(str) levels(str) /*
-        */ k(str) estcmd(str) [ over(str) olevel(str) wvar(str) ifs(str) /*
-        */ mifs(str) mvars(str) mcons(str) nodots ]
+        */ k(str) estcmd(str) mcons(str) [ wvar(str) /*
+        */ ifs(str) mifs(str) mvars(str) nodots ]
     
     // weights
     if "`wvar'"!="" local wgt "[aw=`wvar']"
     
     // whether outcome model has constant
     if "`type'"=="factor" & `bn' local nocons noconstant
-    
-    // over
-    if "`over'"!="" {
-        qui replace `over' = `olevel'
-    }
     
     // create tempvars for IFs
     local vce = `"`ifs'"'!=""
@@ -526,20 +666,65 @@ program __lnmor, rclass
 end
 
 program _get_model_IF
+    args cons xvars IFs
     tempname sc
     qui predict double `sc', score
     capt confirm matrix e(V_modelbased)
     if _rc==1 exit _rc
     if _rc local V V
     else   local V V_modelbased
-    mata: _get_model_IF(st_local("0"), "e(`V')", "`sc'")
-    c_local mvars `xvars'
-    c_local mcons  `cons'
+    mata: _get_model_IF("e(`V')", "`sc'", `cons', st_local("xvars"), /*
+        */ st_local("IFs"))
 end
 
 version 11
 mata:
 mata set matastrict on
+
+void _at_expand(real scalar K0, real scalar J, real scalar atmax)
+{
+    real scalar       j, k, K, K1, R
+    string rowvector  at
+    real colvector    l
+    real matrix       AT
+    pointer rowvector L
+    
+    // collect levels of no levels specified
+    if (K0>=.) {
+        at = tokens(st_local("at"))
+        L = J(1,J,NULL)
+        K1 = 1
+        for (j=1; j<=J; j++) {
+            L[j] = &(mm_unique(st_data(., at[j])))
+            K1 = K1 * rows(*L[j])
+            if (hasmissing(*L[j])) {
+                stata(`"di as err "something is wrong; {bf:"' + at[j] +
+                    `"} has missing values within estimation sample""')
+                exit(error(498))
+            }
+        }
+        st_local("K", strofreal(K1))
+    }
+    else K1 = K0
+    if (K1>atmax) {
+        stata(`"di as err "{bf:at()} has \`K' levels; allowed maximum is \`atmax'""')
+        stata(`"di as err "use option {bf:atmax()} to change allowed maximum""')
+        exit(error(498))
+    }
+    // construct matrix of combinations
+    AT = J(K1, J, 1)
+    R = 1; K = K1
+    for (j=1; j<=J; j++) {
+        if (K0>=.) l = *L[j]
+        else       l = strtoreal(tokens(st_local("levels"+strofreal(j))))'
+        k = rows(l)
+        K = K / k
+        AT[,j] = J(R, 1, mm_expand(l, K, 1, 1))
+        R = R * k
+    }
+    st_matrix(st_local("AT"), AT)
+    st_matrixrowstripe(st_local("AT"), (J(K1,1,""), strofreal(1::K1)))
+}
 
 void _get_levels(string scalar j)
 {
@@ -559,6 +744,11 @@ void _get_levels(string scalar j)
         _collate(w, p)
     }
     else w = 1
+    if (X[rows(X)]>=.) {
+        stata(`"di as err "something is wrong; {bf:"' + Name +
+            `"} has missing values within estimation sample""')
+        exit(error(498))
+    }
     // obtain levels
     a = selectindex(_mm_unique_tag(X))
     if (st_local("type"+j)!="factor") {
@@ -636,35 +826,16 @@ void _mktmpnames(string scalar nm, real scalar k)
     st_local(nm, invtokens(st_tempname(k)))
 }
 
-void _get_model_IF(string scalar IFs, string scalar V, string scalar score)
+void _get_model_IF(string scalar V, string scalar score, real scalar cons,
+    string scalar xvars, string scalar IFs)
 {
-    real scalar      k, cons
-    string rowvector xvars
     real colvector   sc
     real matrix      X, IF
     
-    // obtain X
-    xvars = st_matrixcolstripe(V)[,2]'
-    k = length(xvars)
-    if (strpos(xvars[k], "."))
-         cons = (substr(xvars[k], strpos(xvars[k],".")+1, .)=="_cons") 
-    else cons = (xvars[k]=="_cons")
-    if (cons) {
-        k = k - 1
-        st_local("cons", "cons")
-    }
-    if (k) {
-        xvars = xvars[|1\k|]
-        st_view(X=., ., xvars)
-        st_local("xvars", invtokens(xvars))
-    }
-    // obtains score
     st_view(sc=., ., score)
-    // compute IFs
+    st_view(X=., ., xvars)
     st_view(IF=., ., st_addvar("double", tokens(IFs)))
-    if (cons) IF[.,k+1]      = sc
-    if (k)    IF[|1,1 \.,k|] = sc:*X
-    IF[.,.] = IF * st_matrix(V)'
+    IF[.,.] = (sc:*X, J(1, cons, sc)) * st_matrix(V)'
 }
 
 void _lnmor_restore()
@@ -706,7 +877,7 @@ void __lnmor_update_IF()
     st_varrename(st_local("name"), st_local("name0"))
     st_varrename(st_local("name2"), st_local("name"))
     // delta * (IF of p)
-    cons = st_local("mcons")!=""
+    cons = strtoreal(st_local("mcons"))
     w = st_local("wvar")!="" ? st_data(., st_local("wvar")) : 1
     pbar = st_numscalar("r(mean)")
     p    = st_data(., st_local("PS"))

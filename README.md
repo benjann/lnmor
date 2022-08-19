@@ -22,5 +22,9 @@ to install `moremata`.
 
 Main changes:
 
+    19aug2022 (version 1.0.1)
+    - new at() option introduced; over() is discarded
+    - imporved parsing of varlist and added various checks and error messages
+
     18aug2022 (version 1.0.0)
     - released on GitHub
