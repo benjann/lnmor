@@ -22,6 +22,12 @@ to install `moremata`.
 
 Main changes:
 
+    22aug2022 (version 1.0.2)
+    - support for application after -svy- added
+    - support for application after -mi estimate- added
+    - now returning df_r (affects p-values and CIs)
+    - improved formatting of progress information
+
     19aug2022 (version 1.0.1)
     - new at() option introduced; over() is discarded
     - imporved parsing of varlist and added various checks and error messages

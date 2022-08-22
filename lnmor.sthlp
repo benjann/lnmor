@@ -1,5 +1,5 @@
 {smcl}
-{* 19aug2022}{...}
+{* 22aug2022}{...}
 {hi:help lnmor}{...}
 {right:{browse "http://github.com/benjann/lnmor/"}}
 {hline}
@@ -86,15 +86,15 @@
             {varname} {cmd:=} {it:{help numlist}} [{varname} {cmd:=} {it:{help numlist}} ...]
 
 {pmore}
-    Computations will be repeated for all combinations of specified values. You
-    can also type {opth at(varlist)} in which case 
-    the levels found in the data will be used. In any case, the variables specified
-    in {cmd:at()} must be different from the variables specified in the main
-    {it:varlist}. Furthermore, only variables that appear as covariates
-    in the original model are allowed.
+    Computations will be repeated for each pattern of combinations of the
+    specified covariate values. You can also type {opth at(varlist)} to use the levels
+    found in the data for each variable instead of specifying custom values. In
+    any case, the variables specified in {cmd:at()} must be different from the
+    variables specified in the main {it:varlist}. Furthermore, only variables
+    that appear as covariates in the original model are allowed.
 
 {phang}
-    {opt atmax(#)} sets the maximum number of (combinations of) values that is
+    {opt atmax(#)} sets the maximum number of patterns (combinations of values) that is
     allowed in {cmd:at()}. The default is {cmd:atmax(50)}.
 
 {phang}
@@ -108,8 +108,11 @@
 
 {phang}
     {opt post} stores results in {cmd:e()} rather than in {cmd:r()}. {cmd:post}
-    has no effect of {cmd:vce(bootstrap)} or {cmd:vce(jackknife)} is specified
-    (results will always be stored in {cmd:e()} in these cases).
+    has no effect if {cmd:vce(bootstrap)} or {cmd:vce(jackknife)} is specified,
+    or if {cmd:lnmor} is applied after {helpb svy}; results will always be stored
+    in {cmd:e()} in these cases. If {cmd:lnmor} is applied after
+    {helpb mi estimate}, option {cmd:post} behaves in the same way as option
+    {cmd:post} in {helpb mi estimate}.
 
 {marker vcetype}{...}
 {phang}
@@ -119,28 +122,24 @@
     {cmd:vce()} to request replication-based standard errors; {it:vcetype} may be
     {cmdab:boot:strap} or {cmdab:jack:knife}; see {it:{help vce_option}}. If replication-based
     standard errors are requested, {cmd:lnmor} will reestimate the original model
-    within replications.
-
-{pmore}
-    For clarification, if you want to obtain replication-based standard errors, must specify
-    {cmd:vce(bootstrap)} or {cmd:vce(jackknife)} with {cmd:lnmor}, not with the
-    the original command. Specifying {cmd:vce(bootstrap)} or
-    {cmd:vce(jackknife)} with the original model will have no effect on the
-    results by {cmd:lnmor} (apart from clustering being picked up, if
-    relevant). That is, the replication-based variance matrix of the original
-    model is not used in the computations by {cmd:lnmor}.
+    within replications. Option {cmd:vce()} is not allowed after {helpb svy}
+    or {helpb mi estimate}.
 
 {phang}
     {opt nose} suppresses calculation of the VCE and standard errors. The
-    variance matrix will be set to zero in this case. {cmd:vce(bootstrap)}
-    and {cmd:vce(jackknife)} imply {cmd:nose} (to save computer time).
+    variance matrix will be set to zero in this case. To save computer time,
+    {cmd:nose} is implied if {cmd:vce(bootstrap)} or {cmd:vce(jackknife)} is specified
+    or if {cmd:lnmor} is applied after {helpb svy} with replication-based VCE. Option
+    {cmd:nose} is not allowed after {helpb svy} with linearization-based VCE or after
+    {helpb mi estimate}.
 
 {phang}
     {opt ifgenerate(spec)} stores the influence functions of the estimates. Either
     specify a list of new variables names,
     or specify {it:stub}{cmd:*}, in which case the new variables will be named
     {it:stub}{cmd:1}, {it:stub}{cmd:2}, etc. Option {cmd:ifgenerate()} is not
-    allowed with {cmd:vce(bootstrap)} or {cmd:vce(jackknife)}.
+    allowed with {cmd:vce(bootstrap)} or {cmd:vce(jackknife)}, after {helpb svy}
+    with replication-based VCE, or after {helpb mi estimate}.
 
 {phang}
     {opt replace} allows to overwrite existing variables.
@@ -172,6 +171,8 @@
 
 {title:Example}
 
+{dlgtab:Basic usage}
+
 {pstd}
     The following example illustrates how the adjusted marginal odds ratio can be
     different from the conditional odds ratio:
@@ -200,7 +201,7 @@
         . {stata lnmor i.smoke, at(race) or}
 
 {pstd}
-    Use use {cmd:ibn.}{it:varname} to obtain marginal odds by level rather than odds ratios:
+    Use {cmd:ibn.}{it:varname} to obtain marginal odds by level rather than odds ratios:
 
         . {stata logit low i.smoke i.race age lwt ptl ht ui i.smoke#i.race, or}
         . {stata lnmor ibn.smoke, at(race) or}
@@ -215,6 +216,52 @@
         . {stata "nlcom (smoke:(logit(_b[2._at]) - logit(_b[1._at]))), post"}
         . {stata ereturn display, eform(Odds Ratio)}
 
+{dlgtab:Bootstrap standard errors}
+
+{pstd}
+    By default, {cmd:lnmor} reports robust standard errors based on
+    influence-functions (possibly including clustering, which will be picked up
+    automatically if the original model included clustering). If you want to
+    obtain replication-based standard errors, specify {cmd:vce(bootstrap)} or
+    {cmd:vce(jackknife)} with {cmd:lnmor}, not with the original command
+    (it does not hurt to specify these options with the original command, but
+    {cmd:lnmor} will not pick them up). An example is as follows:
+
+        . {stata webuse lbw}
+        . {stata logit low i.smoke i.race age lwt ptl ht ui, or}
+        . {stata lnmor i.smoke i.race age lwt, vce(bootstrap) or}
+
+{pstd}
+    To {cmd:lnmor} reestimates the original model within the single
+    replications.
+
+{dlgtab:Survey estimation}
+
+{pstd}
+    {cmd:lnmor} can be applied after survey estimation, i.e. after a model
+    to which the {helpb svy} prefix has been applied.
+
+        . {stata webuse nhanes2f}
+        . {stata "svy: logit highbp i.female i.race height weight age, or"}
+        . {stata lnmor i.female i.race, or}
+
+{pstd}
+    This also works with replication-based VCE.
+
+        . {stata webuse nhanes2brr}
+        . {stata "svy: logit highbp i.female i.race height weight age, or"}
+        . {stata lnmor i.female i.race, or}
+
+{dlgtab:Multiple imputation}
+
+{pstd}
+    {cmd:lnmor} can be applied after a model to which multiple imputation
+    has been applied.
+
+        . {stata webuse mheart1s20}
+        . {stata "mi estimate, dots: logit attack i.smokes age bmi i.hsgrad i.female, or"}
+        . {stata lnmor i.smokes, or}
+
 
 {title:Stored results}
 
@@ -226,6 +273,7 @@
 {synopt:{cmd:r(N)}}number of observations{p_end}
 {synopt:{cmd:r(N_clust)}}number of clusters{p_end}
 {synopt:{cmd:r(k_eq)}}number of equations in {cmd:r(b)}{p_end}
+{synopt:{cmd:r(df_r)}}{cmd:r(N)}-1 or {cmd:r(N_clust)}-1{p_end}
 {synopt:{cmd:r(nterms)}}number of terms{p_end}
 {synopt:{cmd:r(k}{it:#}{cmd:)}}number levels in term {it:#}{p_end}
 {synopt:{cmd:r(rank)}}rank of {cmd:r(V)}{p_end}
@@ -257,9 +305,7 @@
 {pstd}
 If {cmd:post} is specified, results are stored in {cmd:e()} rather than
 {cmd:r()}, and function {cmd:e(sample)} that marks the estimation sample is
-added. Results are also stored in {cmd:e()} in case of {cmd:vce(bootstrap)}
-or {cmd:vce(jackknife)} (along with the results stored by {helpb bootstrap}
-or {helpb jackknife}).
+added.
 
 
 {title:Methods and Formulas}

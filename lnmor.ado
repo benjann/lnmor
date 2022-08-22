@@ -1,4 +1,4 @@
-*! version 1.0.1  19aug2022  Ben Jann
+*! version 1.0.2  22aug2022  Ben Jann
 
 program lnmor
     version 14
@@ -10,20 +10,50 @@ program lnmor
         exit
     }
     local version : di "version " string(_caller()) ":"
-    _parse_opts `0' // returns 00, estcmd
-    `version' _vce_parserun lnmor, noeqlist mark(CLuster) : `00'
-    if "`s(exit)'" != "" {
+    _parse_opts `0' // returns diopts, header, post, 00, estcmd, prefix
+    if "`prefix'"=="svyr" {
+        nobreak {
+            capt noisily break {
+                `version' `00'
+            }
+            if _rc {
+                local rc = _rc
+                capt mata mata drop _LNMOR_TMP_IFs
+                exit `rc'
+            }
+        }
+        _ereturn_svyr
+        _ereturn_cmdline `0'
+        Display, `header' `diopts'
+        if `"`e(ifgenerate)'"'!="" {
+            describe `e(ifgenerate)'
+        }
+        exit
+    }
+    if "`prefix'"=="svyb" {
+        `version' `00'
+        _ereturn_svy
+        _ereturn_cmdline `0'
+        Display, `header' `diopts'
+        exit
+    }
+    if "`prefix'"=="mi" {
+        `version' `00'
+        _ereturn_cmdline `0'
+        exit
+    }
+    if "`prefix'"!="" {
+        `version' _vce_parserun lnmor, noeqlist mark(CLuster): `00'
         _ereturn_cmdline `0'
         exit
     }
     `estcmd' // rerun estimation command in case of replication VCE
-    _check_source_model
-    syntax anything [, post or * ]
-    _lnmor `anything', `options' // returns diopts
+    _check_source_model `e(cmd)'
+    _lnmor `00'
     _return_cmdline `0'
     if "`post'"!="" {
         _postrtoe, all
-        Display, `or' `diopts'
+        Display, `header' `diopts'
         if `"`e(ifgenerate)'"'!="" {
             describe `e(ifgenerate)'
         }
@@ -36,7 +66,7 @@ program lnmor
     nobreak {
         _return hold `rcurrent'
         capture noisily break {
-            Display, `or' `diopts'
+            Display, `header' `diopts'
             if `"`e(ifgenerate)'"'!="" {
                 describe `e(ifgenerate)'
             }
@@ -44,14 +74,6 @@ program lnmor
         local rc = _rc
         _return restore `rcurrent'
         if `rc' exit `rc'
-    }
-end
-
-program _check_source_model
-    if !inlist(`"`e(cmd)'"',"logit","probit") error 301
-    if `"`e(prefix)'"'=="svy" {
-        di as err "model has {bf:svy} prefix; this is not supported"
-        exit 498
     }
 end
 
@@ -66,55 +88,179 @@ end
 
 program _parse_opts
     _parse comma lhs 0 : 0
-    syntax [, vce(passthru) post or NOSE lnmorspec(str asis) /*
-        */ IFGENerate(passthru) * ]
+    syntax [, vce(passthru) post or noHEADer NOSE IFGENerate(passthru) /*
+        */ lnmorspec(str asis) * ]
     if `"`lnmorspec'"'!="" {
         // lnmor cmd varlist [if] [in], options lnmorspec()
-        local options `post' `options'
-        local options `or' `options'
-        local options `nose' `options'
-        local options `vce' `options'
-        local options `ifgenerate' `options'
+        local options `vce' `post' `or' `header '`nose' `ifgenerate' `options'
         if `"`options'"'!="" {
             local options , `options'
         }
-        c_local 0 `lnmorspec'
         c_local estcmd `lhs'`options'
+        c_local prefix ""
+        local 0 `lnmorspec'
+        c_local 0 `0'
+        _parse comma lhs 0 : 0
+        syntax [, post or noHEADer * ]
+        _get_diopts diopts options, `options'
+        c_local diopts `or' `header' `diopts'
+        c_local post `post'
+        c_local 00 `lhs', `options'
+        exit
+    }
+    // display options etc.
+    _get_diopts diopts options, `options'
+    c_local diopts `or' `header' `diopts'
+    c_local post `post'
+    // svy
+    if `"`e(prefix)'"'=="svy" {
+        local options `ifgenerate' `options'
+        _check_source_model `e(cmd)'
+        if `"`vce'"'!="" {
+            di as err "{bf:vce()} not allowed after {bf:svy}"
+            exit 198
+        }
+        local vcetype `"`e(vce)'"'
+        if `"`vcetype'"'=="linearized" local svytype "svyr"
+        else                           local svytype "svyb"
+        _on_colon_parse `e(cmdline)'
+        _parse_svy `s(before)' // returns svy
+        _parse_estcmd 0 `s(after)' // returns estcmd
+        if "`svytype'"=="svyr" {
+            if `"`nose'"'!="" {
+                di as err "{bf:nose} not allowed after {bf:svy `vcetype'}"
+                exit 198
+            }
+            c_local 00 `svy' noheader notable: /*
+                */ _lnmor_`svytype' `estcmd' /*
+                */ lnmorspec(`lhs', post saveifuninmata `options')
+        }
+        else {
+            if `"`ifgenerate'"'!="" {
+                di as err `"{bf:ifgenerate()} not allowed after {bf:svy `vcetype'}"'
+                exit 198
+            }
+            c_local 00 `svy' noheader notable: /*
+                */ _lnmor_`svytype' `estcmd' /*
+                */ lnmorspec(`lhs', post nose `options')
+        }
+        c_local prefix "`svytype'"
+        exit
+    }
+    // or -> eform()
+    if "`or'"!="" local eform eform(Odds Ratio)
+    // mi
+    if `"`e(mi)'"'=="mi" {
+        if `"`e(cmd)'"'=="mi estimate" {
+            _check_source_model `e(cmd_mi)'
+        }
+        else {
+            _check_source_model `e(cmd)'
+        }
+        if `"`ifgenerate'"'!="" {
+            di as err "{bf:ifgenerate()} not allowed after {bf:mi estimate}"
+            exit 198
+        }
+        if `"`nose'"'!="" {
+            di as err "{bf:nose} not allowed after {bf:mi estimate}"
+            exit 198
+        }
+        _parse_opts_vce, `vce' // returns prefix
+        if `"`vce'"'!="" {
+            di as err "{bf:vce(`prefix')} not allowed after {bf:mi estimate}"
+            exit 198
+        }
+        _on_colon_parse `e(cmdline_mi)'
+        _parse_mi `s(before)' // returns mi, mieform
+        if `"`mieform'"'=="" local eform `mieform'
+        _parse_estcmd 0 `s(after)' // returns estcmd
+        c_local 00 `mi' `eform' `header' `diopts' `post': lnmor `estcmd' /*
+            */ lnmorspec(`lhs', post `options')
+        c_local prefix "mi"
         exit
     }
     // bootstrap/jackknife
-    _parse_opts_vce, `vce' // returns repl
-    if !`repl' {
-        c_local 00 `lhs'`0'
+    _parse_opts_vce, `vce' // returns prefix
+    if "`prefix'"=="" {
+        c_local 00 `lhs', `vce' `nose' `ifgenerate' `options'
         exit
     }
-    _check_source_model
+    _check_source_model `e(cmd)' // returns estcmd
     if `"`ifgenerate'"'!="" {
         di as err "{bf:ifgenerate()} not allowed with replication based VCE"
         exit 198
     }
-    _parse_opts_estcmd `e(cmdline)'
-    local post post
-    local nose nose
-    if "`or'"!="" local eform eform(Odds Ratio)
+    _parse_estcmd 1 `e(cmdline)'
     if `"`e(clustvar)'"'!="" local cluster cluster(`e(clustvar)')
-    c_local 00 `estcmd' `vce' `cluster' `eform' /*
-        */ lnmorspec(`lhs', `post' `nose' `options')
+    c_local 00 `estcmd' `vce' `cluster' `eform' `diopts' /*
+        */ lnmorspec(`lhs', post nose `options')
+    c_local prefix "`prefix'"
+end
+
+program _parse_svy
+    _parse comma lhs 0 : 0
+    syntax [, * ]
+    c_local svy `lhs', `options'
+end
+
+program _ereturn_svyr, eclass
+    local k_eq `"`e(k_eq_lnmor)'"'
+    tempname b V
+    mat `b' = e(b)
+    mata: _ereturn_svy_rename()
+    if `"`e(wtype)'"'!="" local awgt [aw`e(wexp)'] // really needed?
+    _ms_build_info `b' `awgt'
+    ereturn repost b=`b', rename
+    eret local V_modelbased "" // remove matrix e(V_modelbased)
+    foreach vmat in srs srssub srswr srssubwr msp {
+        capt confirm matrix e(V_`vmat')
+        if _rc==1 exit _rc
+        if _rc continue
+        matrix `V' = e(V)
+        mata: st_replacematrix(st_local("V"), st_matrix("e(V_`vmat')"))
+        eret matrix V_`vmat' `V'
+    }
+    eret scalar k_eq = `k_eq'
+    eret local k_eq_lnmor ""
+    eret local predict ""
+    _ereturn_svy
+end
+
+program _ereturn_svy, eclass
+    eret local cmdname ""
+    eret local command ""
+end
+
+program _parse_mi // remove -post-, exctract eform()
+    _parse comma lhs 0 : 0
+    syntax [, post or eform(passthru) * ]
+    c_local mi `lhs', cmdok `options'
+    c_local mieform `or' `eform'
+end
+
+program _parse_estcmd // remove -or-; possibly remove -vce-, -cluster-, -robust-
+    gettoken removevce 0 : 0
+    _parse comma lhs 0 : 0
+    syntax [, vce(passthru) CLuster(passthru) Robust or  * ]
+    if !`removevce' local options `robust' `cluster' `vce' `options'
+    c_local estcmd `lhs', `options'
 end
 
 program _parse_opts_vce
     syntax [, vce(str) ]
     gettoken v : vce, parse(", ")
-    local repl 0
-    if      `"`v'"'==substr("bootstrap",1,max(4,strlen(`"`v'"'))) local repl 1
-    else if `"`v'"'==substr("jackknife",1,max(4,strlen(`"`v'"'))) local repl 1
-    c_local repl `repl'
+    local l = strlen(`"`v'"')
+    if      `"`v'"'==substr("bootstrap",1,max(4,`l')) local prefix bootstrap
+    else if `"`v'"'==substr("jackknife",1,max(4,`l')) local prefix jackknife
+    c_local prefix `prefix'
 end
 
-program _parse_opts_estcmd // remove -vce()- and -or-
-    _parse comma lhs 0 : 0
-    syntax [, vce(str) or  * ] 
-    c_local estcmd `lhs', `options'
+program _check_source_model
+    if !inlist(`"`0'"',"logit","probit") {
+        di as err "last estimates not found; " /*
+            */ "{bf:lnmor} only allowed after {bf:logit} or {bf:probit}"
+        exit 301
+    }
 end
 
 program _postrtoe, eclass
@@ -162,15 +308,26 @@ program Display
     syntax [, or noHEADer * ]
     if "`or'"!="" local eform eform(Odds Ratio)
     if "`header'"=="" {
+        local hflex 1
+        if      c(stata_version)<17            local hflex 0
+        else if d(`c(born_date)')<d(13jul2021) local hflex 0
         local w1 17
         local c1 49
         local c2 = `c1' + `w1' + 1
         local w2 10
-        local headopts head2left(`w1') head2right(`w2')
-        if      c(stata_version)<17            local headopts
-        else if d(`c(born_date)')<d(13jul2021) local headopts
-        _coef_table_header, `headopts'
-        di as txt _col(`c1') "Command" _col(`c2') "= " as res %`w2's e(est_cmd)
+        local c3 = `c2' + 2
+        if `hflex' local headopts head2left(`w1') head2right(`w2')
+        else       local headopts
+        _coef_table_header, nomodeltest `headopts'
+        if `hflex' {
+            // if _coef_table_header used more space than allocated
+            local offset1 = max(0, `s(head2_left)' - `w1')
+            local offset2 = max(0, `s(head2_right)' - `w2')
+            local c1 = `c1' - `offset1' - `offset2'
+            local c2 = `c2' - `offset2'
+        }
+        di as txt _col(`c1') "Command" _col(`c2') "=" /*
+            */ _col(`c3') as res %`w2's e(est_cmd)
         if `"`e(atvars)'"'!="" {
             di ""
             local atvars `"`e(atvars)'"'
@@ -194,12 +351,8 @@ end
 program _lnmor, rclass
     syntax varlist(numeric fv) [, /*
         */ kmax(numlist int max=1 >1 missingokay) /*
-        */ at(passthru) atmax(int 50) noDOTs NOSE noHEADer /*
-        */ IFGENerate(str) replace * ]
-    
-    // collect diopts
-    _get_diopts diopts, `options'
-    c_local diopts `header' `diopts'
+        */ at(passthru) atmax(int 50) noDOTs NOSE /*
+        */ IFGENerate(str) replace saveifuninmata ]
     
     // default kmax
     if "`kmax'"=="" local kmax 100
@@ -209,6 +362,7 @@ program _lnmor, rclass
     local est_cmd     `"`e(cmd)'"'
     local clustvar    `"`e(clustvar)'"'
     if `"`clustvar'"'!="" {
+        local N_clust = e(N_clust)
         local vceopt vce(cluster `clustvar')
     }
     _collect_model_info // returns mvars, mnames, mcons, mk
@@ -233,7 +387,7 @@ program _lnmor, rclass
         local awgt "[aw=`wvar']"
     }
     
-    // process varlist / determine levels
+    // process varlist
     fvexpand `varlist'
     _collect_fvinfo `r(varlist)' // returns names, nterms, term#, type#, name#, bn#
     local tmp: list dups names
@@ -246,11 +400,6 @@ program _lnmor, rclass
         gettoken tmp : tmp
         di as error "{bf:`tmp'} not found in list of covariates"
         exit 111
-    }
-    forv j = 1/`nterms' {
-        tempname levels`j'
-        mata: _get_levels("`j'") // fills in levels#, returns k#, cname#
-        mat coln `levels`j'' = "value" "count"
     }
     
     // at
@@ -265,7 +414,15 @@ program _lnmor, rclass
         }
     }
     
+    // determine treatment levels
+    forv j = 1/`nterms' {
+        tempname levels`j'
+        mata: _get_levels("`j'") // fills in levels#, returns k#, cname#
+        mat coln `levels`j'' = "value" "count"
+    }
+    
     // prepare VCE
+    if "`saveifuninmata'"!="" local nose
     local vce = "`nose'"==""
     if `vce' {
         // tempvars for outcome IFs
@@ -287,7 +444,11 @@ program _lnmor, rclass
     else local ifgenerate
     
     // compute marginal ORs
-    if "`dots'"=="" di as txt "(" _c
+    if "`dots'"=="" {
+        di as txt _n "Enumerating predictions:" _n "  " _c
+        local lsize = c(linesize)
+        local lpos 3
+    }
     if `hasat' tempname B
     local k 0
     tempname b
@@ -296,7 +457,7 @@ program _lnmor, rclass
     // foreach o of local olevels {
         // local ++k
         if `hasat' {
-            if "`dots'"=="" di as txt "`k':" _c
+            if "`dots'"=="" _progress_info "`k':" `lpos' `lsize'
             local j 0
             foreach v of local at {
                 local ++j
@@ -308,11 +469,12 @@ program _lnmor, rclass
                 rename `name`j'' `name0'
                 rename `cname`j'' `name`j''
             }
-            if "`dots'"=="" di as txt "`name`j''" _c
+            if "`dots'"=="" _progress_info "`name`j''[`k`j'']" `lpos' `lsize'
             __lnmor [`weight'`exp'], term(`term`j'') type(`type`j'') /*
                 */ name(`name`j'') bn(`bn`j'') levels(`levels`j'') /*
                 */ k(`k`j'') wvar(`wvar') ifs(`IF`j'_`k'') mifs(`mIFs') /*
-                */ mvars(`mvars') mcons(`mcons') estcmd(`est_cmd') `dots'
+                */ mvars(`mvars') mcons(`mcons') estcmd(`est_cmd') /*
+                */ lsize(`lsize') lpos(`lpos') `dots'
             matrix `b' = nullmat(`b'), r(b)
             if "`cname`j''"!="`name`j''" {
                 rename `name`j'' `cname`j''
@@ -326,15 +488,28 @@ program _lnmor, rclass
         }
     }
     if `hasat' local b `B'
-    if "`dots'"=="" di as txt "done)"
+    if "`dots'"=="" {
+        _progress_info "done" `lpos' `lsize'
+        di ""
+    }
     
     // returns
     _ms_build_info `b' `awgt'
     tempname V
-    matrix `V' = `b'' * `b' * 0 
-    if `vce' {
+    matrix `V' = `b'' * `b' * 0
+    if "`saveifuninmata'"!="" {
+        local rank = colsof(`V')
+        mata: _lnmor_restore(1)
+        mata: *crexternal("_LNMOR_TMP_IFs") = st_data(., st_local("IFs"))
+        mata: st_replacematrix(st_local("V"), I(`rank'))
+    }
+    else if `vce' {
         qui total `IFs' [`weight'`exp'], `vceopt'
-        capt assert (e(N)==`est_N')
+        if "`weight'"=="iweight" {
+            local tot_N = el(e(_N),1,1)
+        }
+        else local tot_N = e(N)
+        capt assert (`tot_N'==`est_N')
         if _rc==1 exit _rc
         if _rc {
             di as error "something is wrong; inconsistent estimation sample"
@@ -343,6 +518,7 @@ program _lnmor, rclass
         mata: st_replacematrix(st_local("V"), st_matrix("e(V)"))
         local rank = e(rank)
         if `"`clustvar'"'!="" {
+            local N_clust = e(N_clust)
             local evce `"`e(vce)'"'
             local vcetype `"`e(vcetype)'"'
         }
@@ -350,7 +526,7 @@ program _lnmor, rclass
             local evce robust
             local vcetype Robust
         }
-        mata: _lnmor_restore()
+        mata: _lnmor_restore("`ifgenerate'"!="")
     }
     else {
         restore
@@ -385,11 +561,18 @@ program _lnmor, rclass
     if `vce' {
         return local clustvar `"`clustvar'"'
         if `"`clustvar'"'!="" {
-            return scalar N_clust = e(N_clust)
+            return scalar N_clust = `N_clust'
+            return scalar df_r = `N_clust' - 1
+        }
+        else {
+            return scalar df_r = `est_N' - 1
         }
         return local vce `"`evce'"'
         return local vcetype `"`vcetype'"'
         return scalar rank = `rank'
+    }
+    else {
+        return scalar df_r = `est_N' - 1
     }
     if "`ifgenerate'"!="" {
         local coln: coln e(b)
@@ -407,6 +590,23 @@ program _lnmor, rclass
     }
 end
 
+program _progress_info
+    args s lpos lsize
+    local l = strlen("`s'")
+    if (`lpos'+`l'-1)>`lsize' {
+        local l0 = `lsize' - `lpos' + 1
+        local s0 = substr("`s'", 1, `l0')
+        di as txt "`s0'" _n "  " _c
+        local lpos 3
+        local s = substr("`s'", `l0'+1, .)
+        local l = `l' - `l0'
+        
+    }
+    di as txt "`s'" _c
+    local lpos = `lpos' + `l'
+    c_local lpos `lpos'
+end
+
 program _collect_model_info
     _ms_lf_info
     c_local mk    `r(k1)'
@@ -418,6 +618,65 @@ program _collect_model_info
         local names `names' `r(name)'
     }
     c_local mnames: list uniq names
+end
+
+program _collect_fvinfo
+    local J 0
+    local name
+    local bn 1
+    local next 1
+    foreach t of local 0 {
+         _ms_parse_parts `t'
+         if !inlist("`r(type)'", "variable", "factor") {
+             di as err "`r(type)' terms not allowed in {it:varlist}"
+             exit 198
+         }
+         if      "`r(type)'"=="variable" local next 1
+         else if "`r(name)'"!="`name'"   local next 1
+         else if "`r(type)'"!="`type'"   local next 1
+         else local next 0
+         if `next' {
+             if `J' {
+                 _collect_fvinfo_bn "`type'" "`term'" `bn'
+                 c_local term`J' "`term'"
+                 c_local type`J' "`type'"
+                 c_local name`J' "`name'"
+                 c_local bn`J'   `bn'
+                 local names `names' `name'
+             }
+             local term
+             local type
+             local name
+             local bn 1
+             local ++J
+         }
+         local term `term' `t'
+         local type `r(type)'
+         local name `r(name)'
+         if r(base)==1 local bn 0
+    }
+     _collect_fvinfo_bn "`type'" "`term'" `bn'
+    c_local term`J' "`term'"
+    c_local type`J' "`type'"
+    c_local name`J' "`name'"
+    c_local bn`J'   `bn'
+    local names `names' `name'
+    c_local names   `names'
+    c_local nterms   `J'
+end
+
+program _collect_fvinfo_bn
+    args type term bn
+    if "`type'"!="factor" {
+        // non-factor variable cannot have bn
+        c_local bn 0
+        exit
+    }
+    if !`bn' exit
+    // check bn status in case of single
+    if `: list sizeof term'>1 exit
+    if substr("`term'", strpos("`term'",".")-2,2)=="bn" exit
+    c_local bn 0
 end
 
 program _parse_at
@@ -499,70 +758,11 @@ program _parse_at
         di as error "{bf:`tmp'} not found in list of covariates"
         exit 111
     }
-    // create matrix of 
+    // create matrix of patterns
     mata: _at_expand(`K', `J', `atmax')
     mat coln `AT' = `at'
     c_local at `at'
     c_local K `K'
-end
-
-program _collect_fvinfo
-    local J 0
-    local name
-    local bn 1
-    local next 1
-    foreach t of local 0 {
-         _ms_parse_parts `t'
-         if !inlist("`r(type)'", "variable", "factor") {
-             di as err "`r(type)' terms not allowed in {it:varlist}"
-             exit 198
-         }
-         if      "`r(type)'"=="variable" local next 1
-         else if "`r(name)'"!="`name'"   local next 1
-         else if "`r(type)'"!="`type'"   local next 1
-         else local next 0
-         if `next' {
-             if `J' {
-                 _collect_fvinfo_bn "`type'" "`term'" `bn'
-                 c_local term`J' "`term'"
-                 c_local type`J' "`type'"
-                 c_local name`J' "`name'"
-                 c_local bn`J'   `bn'
-                 local names `names' `name'
-             }
-             local term
-             local type
-             local name
-             local bn 1
-             local ++J
-         }
-         local term `term' `t'
-         local type `r(type)'
-         local name `r(name)'
-         if r(base)==1 local bn 0
-    }
-     _collect_fvinfo_bn "`type'" "`term'" `bn'
-    c_local term`J' "`term'"
-    c_local type`J' "`type'"
-    c_local name`J' "`name'"
-    c_local bn`J'   `bn'
-    local names `names' `name'
-    c_local names   `names'
-    c_local nterms   `J'
-end
-
-program _collect_fvinfo_bn
-    args type term bn
-    if "`type'"!="factor" {
-        // non-factor variable cannot have bn
-        c_local bn 0
-        exit
-    }
-    if !`bn' exit
-    // check bn status in case of single
-    if `: list sizeof term'>1 exit
-    if substr("`term'", strpos("`term'",".")-2,2)=="bn" exit
-    c_local bn 0
 end
 
 program _parse_ifgenerate
@@ -591,7 +791,7 @@ program __lnmor, rclass
     syntax [fw iw pw], /*
         */ term(str) type(str) name(str) bn(str) levels(str) /*
         */ k(str) estcmd(str) mcons(str) [ wvar(str) /*
-        */ ifs(str) mifs(str) mvars(str) nodots ]
+        */ ifs(str) mifs(str) mvars(str) lsize(str) lpos(str) nodots ]
     
     // weights
     if "`wvar'"!="" local wgt "[aw=`wvar']"
@@ -637,9 +837,10 @@ program __lnmor, rclass
             mata: __lnmor_update_IF()
         }
         drop `PS'
-        if "`dots'"=="" di "." _c
+        if "`dots'"=="" _progress_info "." `lpos' `lsize'
     }
     drop `name'
+    c_local lpos `lpos'
     
     // result
     rename `name1' `name'
@@ -681,6 +882,18 @@ version 11
 mata:
 mata set matastrict on
 
+void _ereturn_svy_rename()
+{
+    real colvector pos
+    string matrix  cstripe
+    
+    cstripe = st_matrixcolstripe(st_local("b"))
+    pos = strpos(cstripe[,1], "@")
+    cstripe[,2] = substr(cstripe[,1],pos:+1,.)
+    cstripe[,1] = substr(cstripe[,1],1,pos:-1)
+    st_matrixcolstripe(st_local("b"), cstripe)
+}
+
 void _at_expand(real scalar K0, real scalar J, real scalar atmax)
 {
     real scalar       j, k, K, K1, R
@@ -707,7 +920,7 @@ void _at_expand(real scalar K0, real scalar J, real scalar atmax)
     }
     else K1 = K0
     if (K1>atmax) {
-        stata(`"di as err "{bf:at()} has \`K' levels; allowed maximum is \`atmax'""')
+        stata(`"di as err "{bf:at()}: too many patterns (\`K'); allowed maximum is \`atmax'""')
         stata(`"di as err "use option {bf:atmax()} to change allowed maximum""')
         exit(error(498))
     }
@@ -758,7 +971,7 @@ void _get_levels(string scalar j)
             if (dots) printf("{txt}(%s has %g levels",st_local("name"+j),rows(a))
             _get_levels_bin(X, w, k)
             a = selectindex(_mm_unique_tag(X))
-            if (dots) printf("; reduced to %g)\n",rows(a))
+            if (dots) printf("; using binned copy with %g levels)\n",rows(a))
             Name = st_tempname(1)
             st_store(p, st_addvar("double", Name), X)
         }
@@ -797,30 +1010,6 @@ void _get_levels_bin(real colvector X, real colvector w, real scalar k)
     }
 }
 
-// void _get_levels_bin(real colvector X, real colvector w, real scalar k)
-// {
-//     real scalar    i, j, qj, cj
-//     real colvector q
-//     
-//     q = _mm_unique(_mm_quantile(X, w, rangen(0,1,k)*(1-1/k):+1/(2*k)))
-//     j = rows(q); i = rows(X)
-//     if (j==1) { // single quantile only => binned X will be constant
-//         X = J(i, 1, q)
-//         return
-//     }
-//     qj = q[j]
-//     cj = (qj+q[j-1])/2
-//     for (; i; i--) {
-//         while (X[i]<cj) {
-//             j--
-//             qj = q[j]
-//             if (j==1) cj = X[1]
-//             else      cj = (qj+q[j-1])/2
-//         }
-//         X[i] = qj
-//     }
-// }
-
 void _mktmpnames(string scalar nm, real scalar k)
 {
     st_local(nm, invtokens(st_tempname(k)))
@@ -838,14 +1027,12 @@ void _get_model_IF(string scalar V, string scalar score, real scalar cons,
     IF[.,.] = (sc:*X, J(1, cons, sc)) * st_matrix(V)'
 }
 
-void _lnmor_restore()
+void _lnmor_restore(real scalar ifgen)
 {
     string scalar    touse
-    real scalar      ifgen
     string colvector IFs
     real matrix      IF
     
-    ifgen = st_local("ifgenerate")!=""
     if (ifgen) {
         IFs = tokens(st_local("IFs"))
         IF = st_data(., IFs)
