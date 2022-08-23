@@ -1,5 +1,5 @@
 {smcl}
-{* 22aug2022}{...}
+{* 23aug2022}{...}
 {hi:help lnmor}{...}
 {right:{browse "http://github.com/benjann/lnmor/"}}
 {hline}
@@ -12,10 +12,33 @@
 {title:Syntax}
 
 {p 8 15 2}
-    {cmd:lnmor} {varlist}
-    [{cmd:,}
+    {cmd:lnmor} {it:termlist} [{cmd:,}
     {help lnmor##opt:{it:options}}
     ]
+
+{pstd}
+    where {it:termlist} is
+
+        {it:term} [{it:term} ...]
+
+{pstd}
+    and {it:term} may be a simple {varname}, a factor variable specification
+    such as {cmd:i.}{it:varname}, {cmd:ibn.}{it:varname}, or
+    {bind:{cmd:i(2 3 4).}{it:varname}}, or an interaction specification of a
+    continuous variable with itself, such as
+    {cmd:c.}{it:varname}{cmd:##}{cmd:c.}{it:varname}
+    (see {help fvvarlist}; interactions containing different variables or
+    interactions involving factor variables or are not allowed). Consecutive
+    elements referring to the same variable (e.g.,
+    {cmd:2.cat 3.cat 4.cat} or {cmd:x1 c.x1#c.x1 c.x1#c.x1#c.x1})
+    will be merged into a single term (as long as they are of the type). Likewise,
+    {varlist} specifications such as {cmd:x*} or {cmd:x1-x5}, or groups
+    such as {cmd:i.(var1 var2)} will be split into separate terms, one
+    for each variable. In general, each {it:term} must refer to a distinct
+    variable (that is, variables may not be repeated across terms) and all
+    specified variables must appear among the covariates of the model to
+    which {cmd:lnmor} is applied.
+
 
 {synoptset 20 tabbed}{...}
 {marker opt}{synopthdr:options}
@@ -58,9 +81,6 @@
 {synopt :{opt coefl:egend}}display legend instead of statistics
     {p_end}
 {synoptline}
-{pstd}
-    {varlist} may contain factor variables (but no interactions); see {help fvvarlist}.
-    {p_end}
 
 
 {title:Description}
@@ -90,7 +110,7 @@
     specified covariate values. You can also type {opth at(varlist)} to use the levels
     found in the data for each variable instead of specifying custom values. In
     any case, the variables specified in {cmd:at()} must be different from the
-    variables specified in the main {it:varlist}. Furthermore, only variables
+    variables specified in {it:termlist}. Furthermore, only variables
     that appear as covariates in the original model are allowed.
 
 {phang}
@@ -287,7 +307,7 @@
 {synopt:{cmd:r(depvar)}}name of dependent variable{p_end}
 {synopt:{cmd:r(term}{it:#}{cmd:)}}specification of term {it:#}{p_end}
 {synopt:{cmd:r(name}{it:#}{cmd:)}}variable name of term {it:#}{p_end}
-{synopt:{cmd:r(type}{it:#}{cmd:)}}{cmd:variable} or {cmd:factor}; type of term {it:#}{p_end}
+{synopt:{cmd:r(type}{it:#}{cmd:)}}{cmd:factor}, {cmd:variable}, or {cmd:interaction}; type of term {it:#}{p_end}
 {synopt:{cmd:r(atnames)}}variable names from {cmd:at()}{p_end}
 {synopt:{cmd:r(wtype)}}weight type{p_end}
 {synopt:{cmd:r(wexp)}}weight expression{p_end}

@@ -1,4 +1,4 @@
-*! version 1.0.2  22aug2022  Ben Jann
+*! version 1.0.3  23aug2022  Ben Jann
 
 program lnmor
     version 14
@@ -206,10 +206,9 @@ end
 program _ereturn_svyr, eclass
     local k_eq `"`e(k_eq_lnmor)'"'
     tempname b V
-    mat `b' = e(b)
-    mata: _ereturn_svy_rename()
+    mat `b' = e(b_lnmor)
     if `"`e(wtype)'"'!="" local awgt [aw`e(wexp)'] // really needed?
-    _ms_build_info `b' `awgt'
+    _ms_build_info `b' if e(sample) `awgt'
     ereturn repost b=`b', rename
     eret local V_modelbased "" // remove matrix e(V_modelbased)
     foreach vmat in srs srssub srswr srssubwr msp {
@@ -428,8 +427,7 @@ program _lnmor, rclass
         // tempvars for outcome IFs
         forv k = 1 / `K' {
             forv j = 1/`nterms' {
-                mata: _mktmpnames("IF`j'_`k'", "`type`j''"=="factor" ? ///
-                    `: list sizeof term`j'' : 1)
+                mata: _mktmpnames("IF`j'_`k'", `: list sizeof term`j'')
                 local IFs `IFs' `IF`j'_`k''
             }
         }
@@ -454,8 +452,6 @@ program _lnmor, rclass
     tempname b
     tempvar name0
     forv k = 1 / `K' {
-    // foreach o of local olevels {
-        // local ++k
         if `hasat' {
             if "`dots'"=="" _progress_info "`k':" `lpos' `lsize'
             local j 0
@@ -622,18 +618,28 @@ end
 
 program _collect_fvinfo
     local J 0
-    local name
     local bn 1
     local next 1
     foreach t of local 0 {
          _ms_parse_parts `t'
-         if !inlist("`r(type)'", "variable", "factor") {
-             di as err "`r(type)' terms not allowed in {it:varlist}"
+         local Type `r(type)'
+         if "`Type'"=="factor" {
+             local Name `r(name)'
+         }
+         else if "`Type'"=="variable" {
+             local Name `r(name)'
+             if "`type'"=="interaction" local Type "interaction"
+         }
+         else if "`Type'"=="interaction" {
+             _collect_fvinfo_interaction `t' // returns Name or error
+             if "`type'"=="variable" local type "interaction"
+         }
+         else {
+             di as err "`Type' terms not allowed in {it:varlist}"
              exit 198
          }
-         if      "`r(type)'"=="variable" local next 1
-         else if "`r(name)'"!="`name'"   local next 1
-         else if "`r(type)'"!="`type'"   local next 1
+         if      "`Name'"!="`name'"   local next 1
+         else if "`Type'"!="`type'"   local next 1
          else local next 0
          if `next' {
              if `J' {
@@ -651,8 +657,8 @@ program _collect_fvinfo
              local ++J
          }
          local term `term' `t'
-         local type `r(type)'
-         local name `r(name)'
+         local type `Type'
+         local name `Name'
          if r(base)==1 local bn 0
     }
      _collect_fvinfo_bn "`type'" "`term'" `bn'
@@ -663,6 +669,26 @@ program _collect_fvinfo
     local names `names' `name'
     c_local names   `names'
     c_local nterms   `J'
+end
+
+program _collect_fvinfo_interaction
+    local k = r(k_names)
+    local names
+    forv i=1/`k' {
+        local names `names' `r(name`i')'
+        if substr(`"`r(op`i')'"',1,1)!="c" {
+            di as err "interactions involving factor variables "/*
+                */ "not allowed in {it:varlist}"
+            exit 198
+        }
+    }
+    local names: list uniq names
+    if `: list sizeof names'>1 {
+        di as err "interactions involving different variables "/*
+                */ "not allowed in {it:varlist}"
+        exit 198
+    }
+    c_local Name `names'
 end
 
 program _collect_fvinfo_bn
@@ -796,8 +822,8 @@ program __lnmor, rclass
     // weights
     if "`wvar'"!="" local wgt "[aw=`wvar']"
     
-    // whether outcome model has constant
-    if "`type'"=="factor" & `bn' local nocons noconstant
+    // whether outcome model has constant (bv=1 only possible if type=factor)
+    if `bn' local nocons noconstant
     
     // create tempvars for IFs
     local vce = `"`ifs'"'!=""
@@ -846,23 +872,40 @@ program __lnmor, rclass
     rename `name1' `name'
     tempname ecurrent
     _estimates hold `ecurrent', restore
-    qui fracreg logit `p' `term' [iw=`w'] in 1/`k', `nocons'
+    su `p' in 1/`k', meanonly
+    local hasvar = r(min)!=r(max)
+    if `hasvar' {
+        qui fracreg logit `p' `term' [iw=`w'] in 1/`k', `nocons'
+    }
     drop `name'
     rename `name0' `name'
 
     // generate IFs
     if `vce' {
-        qui predict double `PS', cm
-        mata: __lnmor_finalize_IF()
+        if `hasvar' {
+            qui predict double `PS'
+            mata: __lnmor_finalize_IF()
+        }
+        else {
+            foreach IF of local ifs {
+                qui replace `IF' = 0
+            }
+        }
     }
     
-    // return
+    // returns
     tempname b
-    matrix `b' = e(b)
-    if "`nocons'"=="" {
-        matrix `b' = `b'[1,1..colsof(`b')-1]
+    if `hasvar' {
+        matrix `b' = e(b)
+        if "`nocons'"=="" {
+            matrix `b' = `b'[1,1..colsof(`b')-1]
+        }
+        mat coleq `b' = ""
     }
-    mat coleq `b' = ""
+    else {
+        mat `b' = J(1,`: list sizeof term', 0)
+        mat coln `b' = `term'
+    }
     return matrix b = `b'
 end
 
@@ -881,18 +924,6 @@ end
 version 11
 mata:
 mata set matastrict on
-
-void _ereturn_svy_rename()
-{
-    real colvector pos
-    string matrix  cstripe
-    
-    cstripe = st_matrixcolstripe(st_local("b"))
-    pos = strpos(cstripe[,1], "@")
-    cstripe[,2] = substr(cstripe[,1],pos:+1,.)
-    cstripe[,1] = substr(cstripe[,1],1,pos:-1)
-    st_matrixcolstripe(st_local("b"), cstripe)
-}
 
 void _at_expand(real scalar K0, real scalar J, real scalar atmax)
 {
@@ -1087,7 +1118,9 @@ void __lnmor_finalize_IF()
     w = st_local("wvar")!="" ? st_data(., st_local("wvar")) : 1
     st_view(X=., ., st_local("term"))
     p = st_data(., st_local("PS"))
-    G = invsym(quadcross(X,cons, w:*p:*(1:-p), X, cons))
+    G = quadcross(X,cons, w:*p:*(1:-p), X, cons)
+    if (cons) G = invsym(G, cols(X)+1) // swap _cons last
+    else      G = invsym(G)
     p = st_data(., st_local("Y")) - p  // Y - p
     st_view(IF=., ., st_local("ifs"))
     IF[.,.] = ((X:*p, J(1,cons,p)) + IF) * G'

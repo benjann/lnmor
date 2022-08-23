@@ -22,6 +22,11 @@ to install `moremata`.
 
 Main changes:
 
+    23aug2022 (version 1.0.3)
+    - can now specify interactions such as -c.x##c.x- to analyze nonlinear effects
+    - some minor changes in how svyr is handled
+    - lnmor no longer breaks if averaged predictions have no variance
+
     22aug2022 (version 1.0.2)
     - support for application after -svy- added
     - support for application after -mi estimate- added

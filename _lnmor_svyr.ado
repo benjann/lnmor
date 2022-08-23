@@ -1,4 +1,4 @@
-*! version 1.0.0  21aug2022  Ben Jann
+*! version 1.0.1  23aug2022  Ben Jann
 *! helper program for -lnmor- after -svy-; do not use manually
 
 program _lnmor_svyr, eclass properties(svyr)
@@ -8,6 +8,7 @@ program _lnmor_svyr, eclass properties(svyr)
     local k_eq = e(k_eq)
     tempname b
     mat `b' = e(b)
+    ereturn matrix b_lnmor = `b', copy
     mata: _ereturn_svy_rename()
     ereturn repost b=`b', rename
     eret local k_eq_lnmor "`k_eq'"
