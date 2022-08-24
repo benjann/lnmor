@@ -22,6 +22,9 @@ to install `moremata`.
 
 Main changes:
 
+    24aug2022 (version 1.0.4)
+    - options dx(), epsilon(), and nowarn added
+
     23aug2022 (version 1.0.3)
     - can now specify interactions such as -c.x##c.x- to analyze nonlinear effects
     - some minor changes in how svyr is handled

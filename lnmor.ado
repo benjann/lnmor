@@ -1,4 +1,4 @@
-*! version 1.0.3  23aug2022  Ben Jann
+*! version 1.0.4  24aug2022  Ben Jann
 
 program lnmor
     version 14
@@ -345,16 +345,55 @@ program Display
         di ""
     }
     eret di, `eform' `options'  // eform does not seem to work if e(V) is missing
+    local dxtype `"`e(dxtype)'"'
+    if      `"`dxtype'"'=="average"  di as txt "(*) average effect"
+    else if `"`dxtype'"'=="atmean"   di as txt "(*) effect at mean"
+    else if `"`dxtype'"'=="observed" {
+        di as txt "(*) effect of marginal shift in observed values"
+    }
+    else if `"`dxtype'"'=="levels" {
+        local lsize = c(linesize)
+        local dxlevels `"`e(dxlevels)'"'
+        local j 1
+        gettoken l dxlevels : dxlevels
+        local l `:di %7.4g `l''
+        local dxnote "(`j') effect at `l'"
+        local l0 = strlen("`dxnote'")
+        foreach l of local dxlevels {
+            local ++j
+            local l `:di %7.4g `l''
+            local l ", (`j') `l'"
+            local l1 = strlen("`l'")
+            if ((`l0'+`l1')>(`lsize'-4)) {
+                if ((`l0'+`l1')<=`lsize') {
+                    local dxnote "`dxnote'`l'"
+                }
+                else {
+                    local dxnote "`dxnote' ..."
+                }
+                continue, break
+            }
+            local dxnote "`dxnote'`l'"
+            local l0 = `l0' + `l1'
+        }
+        di as txt "`dxnote'"
+    }
 end
 
 program _lnmor, rclass
-    syntax varlist(numeric fv) [, /*
+    syntax varlist(numeric fv) [, nowarn /*
         */ kmax(numlist int max=1 >1 missingokay) /*
+        */ dx DX2(passthru) EPSilon(numlist max=1 >0) /* 
         */ at(passthru) atmax(int 50) noDOTs NOSE /*
         */ IFGENerate(str) replace saveifuninmata ]
     
-    // default kmax
-    if "`kmax'"=="" local kmax 100
+    // defaults etc
+    if "`kmax'"==""    local kmax 100
+    if "`epsilon'"=="" local epsilon = exp(log(c(epsdouble))/3)
+    if "`warn'"!=""    local warn qui
+    
+    // parse dx() option
+    _parse_dx, `dx' `dx2' // returns dx, dxtype, dxlevels
     
     // collect some info on original model
     local est_N       = e(N)
@@ -364,7 +403,7 @@ program _lnmor, rclass
         local N_clust = e(N_clust)
         local vceopt vce(cluster `clustvar')
     }
-    _collect_model_info // returns mvars, mnames, mcons, mk
+    _collect_model_info // returns mvars, mnames, mfv, mcons, mk
     
     // preserve model and select sample
     tempname ecurrent
@@ -400,6 +439,25 @@ program _lnmor, rclass
         di as error "{bf:`tmp'} not found in list of covariates"
         exit 111
     }
+    local hasdx 0
+    forv j = 1/`nterms' {
+        local isinmfv: list name`j' in mfv
+        if "`type`j''"=="factor" {
+            if !`isinmfv' {
+                `warn' di as txt "Warning: {bf:`name`j''} is a continuous" /*
+                    */ " variable in the original model"
+            }
+            continue
+        }
+        if `isinmfv' {
+            `warn' di as txt "Warning: {bf:`name`j''} is a factor" /*
+                */ " variable in the original model"
+            continue
+        }
+        if "`type`j''"!="variable" continue
+        local dxtype`j' "`dxtype'"
+        local hasdx 1
+    }
     
     // at
     tempname AT
@@ -417,7 +475,6 @@ program _lnmor, rclass
     forv j = 1/`nterms' {
         tempname levels`j'
         mata: _get_levels("`j'") // fills in levels#, returns k#, cname#
-        mat coln `levels`j'' = "value" "count"
     }
     
     // prepare VCE
@@ -427,7 +484,15 @@ program _lnmor, rclass
         // tempvars for outcome IFs
         forv k = 1 / `K' {
             forv j = 1/`nterms' {
-                mata: _mktmpnames("IF`j'_`k'", `: list sizeof term`j'')
+                if "`dxtype`j''"=="levels" {
+                    mata: _mktmpnames("IF`j'_`k'", `k`j'')
+                }
+                else if "`dxtype`j''"!="" {
+                    tempvar IF`j'_`k'
+                }
+                else {
+                    mata: _mktmpnames("IF`j'_`k'", `: list sizeof term`j'')
+                }
                 local IFs `IFs' `IF`j'_`k''
             }
         }
@@ -465,12 +530,22 @@ program _lnmor, rclass
                 rename `name`j'' `name0'
                 rename `cname`j'' `name`j''
             }
-            if "`dots'"=="" _progress_info "`name`j''[`k`j'']" `lpos' `lsize'
-            __lnmor [`weight'`exp'], term(`term`j'') type(`type`j'') /*
-                */ name(`name`j'') bn(`bn`j'') levels(`levels`j'') /*
-                */ k(`k`j'') wvar(`wvar') ifs(`IF`j'_`k'') mifs(`mIFs') /*
+            if "`dots'"=="" {
+                if "`dxtype`j''"!="" local kj = `k`j'' * 2
+                else                 local kj   `k`j''
+                _progress_info "`name`j''[`kj']" `lpos' `lsize'
+            }
+            local opts /*
+                */ name(`name`j'') levels(`levels`j'') k(`k`j'') /*
+                */ wvar(`wvar') ifs(`IF`j'_`k'') mifs(`mIFs') /*
                 */ mvars(`mvars') mcons(`mcons') estcmd(`est_cmd') /*
                 */ lsize(`lsize') lpos(`lpos') `dots'
+            if "`dxtype`j''"!="" {
+                _lnmor_dx, type(`dxtype`j'') eps(`epsilon') `opts'
+            }
+            else {
+                __lnmor, term(`term`j'') type(`type`j'') bn(`bn`j'') `opts'
+            }
             matrix `b' = nullmat(`b'), r(b)
             if "`cname`j''"!="`name`j''" {
                 rename `name`j'' `cname`j''
@@ -544,28 +619,33 @@ program _lnmor, rclass
     return local  wexp        `"`exp'"'
     return scalar nterms      = `nterms'
     forv j = 1/`nterms' {
-        return local  term`j' "`term`j''"
-        return local  type`j' "`type`j''"
-        return local  name`j' "`name`j''"
+        return local  name`j'   "`name`j''"
+        return local  term`j'   "`term`j''"
+        return local  type`j'   "`type`j''"
+        return scalar dx`j'     = "`dxtype`j''"!=""
         return scalar k`j'      = `k`j''
         return matrix levels`j' = `levels`j''
     }
+    if `hasdx' {
+        return local dxtype       "`dxtype'"
+        return local dxlevels     "`dxlevels'"
+    }
     if `hasat' {
-        return local atvars        "`at'"
-        return matrix at           = `AT'
+        return local atvars     "`at'"
+        return matrix at        = `AT'
     }
     if `vce' {
-        return local clustvar `"`clustvar'"'
+        return local clustvar   `"`clustvar'"'
         if `"`clustvar'"'!="" {
             return scalar N_clust = `N_clust'
-            return scalar df_r = `N_clust' - 1
+            return scalar df_r    = `N_clust' - 1
         }
         else {
             return scalar df_r = `est_N' - 1
         }
-        return local vce `"`evce'"'
+        return local vce     `"`evce'"'
         return local vcetype `"`vcetype'"'
-        return scalar rank = `rank'
+        return scalar rank   = `rank'
     }
     else {
         return scalar df_r = `est_N' - 1
@@ -584,6 +664,45 @@ program _lnmor, rclass
         }
         return local ifgenerate "`ifgenerate'"
     }
+end
+
+program _parse_dx
+    syntax [, dx dx2(str) ]
+    if `"`dx2'"'!=""   local dx dx
+    else if "`dx'"!="" local dxtype "average"
+    if `"`dx2'"'!="" {
+        if `:list sizeof dx2'==1 {
+            if `"`dx2'"'=="." local dx2 "observed"
+            _parse_dx_type, `dx2'
+        }
+        if "`dxtype'"=="" {
+            capt numlist `"`dx2'"', sort
+            if _rc==1 exit _rc
+            if _rc {
+                di as err "{bf:dx()}: invalid specification"
+                exit 198
+            }
+            local dxtype "levels"
+            local dxlevels "`r(numlist)'"
+        }
+    }
+    c_local dx `dx'
+    c_local dxtype `dxtype'
+    c_local dxlevels: list uniq dxlevels
+end
+
+program _parse_dx_type
+    capt syntax [, ATMean AVErage OBServed ]
+    if _rc==1 exit _rc
+    if _rc==0 {
+        local dx `atmean' `average' `observed'
+        if `:list sizeof dx'>1 {
+            di as err "{bf:dx()}: only one of {bf:atmean}, {bf:average}," /*
+                */ " and {bf:observed} allowed"
+            exit 198
+        }
+    }
+    c_local dxtype `dx'
 end
 
 program _progress_info
@@ -608,12 +727,15 @@ program _collect_model_info
     c_local mk    `r(k1)'
     c_local mcons `r(cons1)'
     c_local mvars `r(varlist1)'
-    local names
     foreach t in `r(varlist1)' {
         _ms_parse_parts `t'
         local names `names' `r(name)'
+        if r(type)=="factor" {
+            local fv `fv' `r(name)'
+        }
     }
     c_local mnames: list uniq names
+    c_local mfv: list uniq fv
 end
 
 program _collect_fvinfo
@@ -814,10 +936,9 @@ program _parse_ifgenerate
 end
 
 program __lnmor, rclass
-    syntax [fw iw pw], /*
-        */ term(str) type(str) name(str) bn(str) levels(str) /*
-        */ k(str) estcmd(str) mcons(str) [ wvar(str) /*
-        */ ifs(str) mifs(str) mvars(str) lsize(str) lpos(str) nodots ]
+    syntax, term(str) type(str) name(str) bn(str) levels(str) /*
+         */ k(str) estcmd(str) mcons(str) [ wvar(str) /*
+         */ ifs(str) mifs(str) mvars(str) lsize(str) lpos(str) nodots ]
     
     // weights
     if "`wvar'"!="" local wgt "[aw=`wvar']"
@@ -838,7 +959,8 @@ program __lnmor, rclass
     }
     
     // run
-    tempvar name0 name1 name2 p w PS l
+    tempname l
+    tempvar name0 name1 name2 p w PS
     rename `name' `name0'
     if `vce' {
         tempname Y touse
@@ -909,6 +1031,129 @@ program __lnmor, rclass
     return matrix b = `b'
 end
 
+program _lnmor_dx, rclass
+    syntax, type(str) eps(passthru) name(str) levels(str) k(str) /*
+         */ estcmd(passthru) mcons(passthru) [ wvar(passthru) ifs(str) /*
+         */ mifs(passthru) mvars(passthru) lsize(passthru) lpos(str) nodots ]
+    
+    // average of level-specific dx
+    if "`type'"=="average" {
+        local vce = `"`ifs'"'!=""
+        if `vce' {
+            qui gen double `ifs' = 0
+            tempname IF
+        }
+        tempname b p W
+        mat `b' = J(1, 1, 0)
+        mata: st_numscalar("`W'", quadcolsum(st_matrix("`levels'")[,2]))
+        mat `p' = `levels'[1...,2] / `W'
+        forv i = 1/`k' {
+            __lnmor_dx, `eps' name(`name') levels(`levels') i(`i') `wvar' /*
+                */ `estcmd' ifvar(`IF') `mcons' `mifs' `mvars' `lsize' /*
+                */ lpos(`lpos') `dots'
+            mat `b' = `b' + r(b) * `p'[`i',1]
+            if `vce' {
+                qui replace `ifs' = `ifs' + (`p'[`i',1] * `IF' ///
+                    + r(b) * ((`name'==`levels'[`i',1]) - `p'[`i',1]) / `W')
+                drop `IF'
+            }
+        }
+        mat coln `b' = `name'(*)
+        return matrix b = `b'
+        exit
+    }
+    // dx at mean
+    if "`type'"=="atmean" {
+        // obtain IF of mean and derivative of linear predictor
+        tempvar muIF dz xb name0
+        qui gen double `muIF' = `name' - `levels'[1,1]
+        rename `name' `name0'
+        qui gen byte `name' = 1
+        qui predict double `dz', xb
+        qui replace `name' = 0
+        qui predict double `xb', xb
+        qui replace `dz' = `dz' - `xb'
+        drop `xb' `name'
+        rename `name0' `name'
+        // compute OR
+        tempname b
+        __lnmor_dx, `eps' name(`name') levels(`levels') i(1) `wvar' /*
+            */ `estcmd' ifvar(`ifs') `mcons' `mifs' `mvars' `lsize' /*
+            */ lpos(`lpos') `dots' muif(`muIF') dz(`dz')
+        mat `b' = r(b)
+        mat coln `b' = `name'(*)
+        return matrix b = `b'
+        exit
+    }
+    // dx at observed values
+    if "`type'"=="observed" {
+        tempname b
+        __lnmor_dx, `eps' name(`name') levels(`levels') i(1) `wvar' /*
+            */ `estcmd' ifvar(`ifs') `mcons' `mifs' `mvars' `lsize' /*
+            */ lpos(`lpos') `dots'
+        mat `b' = r(b)
+        mat coln `b' = `name'(*)
+        return matrix b = `b'
+        exit
+    }
+    // dx at levels
+    tempname b
+    mat `b' = J(1, `k', .)
+    local coln
+    forv i = 1/`k' {
+        local coln `coln' `name'(`i')
+        gettoken IF ifs : ifs
+        __lnmor_dx, `eps' name(`name') levels(`levels') i(`i') `wvar' /*
+            */ `estcmd' ifvar(`IF') `mcons' `mifs' `mvars' `lsize' /*
+            */ lpos(`lpos') `dots'
+        mat `b'[1,`i'] = r(b)
+    }
+    mat coln `b' = `coln'
+    return matrix b = `b'
+end
+
+program __lnmor_dx, rclass
+    syntax, eps(str) name(str) levels(str) i(str) /*
+         */ estcmd(str) mcons(str) [ wvar(str) ifvar(str) mifs(str) /*
+         */ mvars(str) muif(str) dz(str) lsize(str) lpos(str) nodots ]
+    
+    // weights
+    if "`wvar'"!="" local wgt "[aw=`wvar']"
+    
+    // create tempvar for IF
+    local vce = `"`ifvar'"'!=""
+    if `vce' {
+        qui gen double `ifvar' = 0
+    }
+    
+    // run
+    tempname p1 p2 l
+    tempvar name0 PS l
+    rename `name' `name0'
+    qui gen double `name' = .
+    scalar `l' = `levels'[`i',1]
+    if `l'>=. local lev `name0'
+    else      local lev `l'
+    forv j = 1/2 {
+        local sign = cond(`j'==1, "-", "+")
+        qui replace `name' = `lev' `sign' `eps'
+        qui predict double `PS', pr
+        su `PS' `wgt', meanonly
+        scalar `p`j'' = r(mean)
+        if `vce' {
+            mata: __lnmor_dx_IF(`eps')
+        }
+        drop `PS'
+        if "`dots'"=="" _progress_info "." `lpos' `lsize'
+    }
+    drop `name'
+    rename `name0' `name'
+    
+    // returns
+    return scalar b = (logit(`p2') - logit(`p1')) / (2*`eps')
+    c_local lpos `lpos'
+end
+
 program _get_model_IF
     args cons xvars IFs
     tempname sc
@@ -972,50 +1217,68 @@ void _at_expand(real scalar K0, real scalar J, real scalar atmax)
 
 void _get_levels(string scalar j)
 {
-    string scalar  Name
-    real scalar    k, dots
+    string scalar  Name, vtype, dxtype
+    real scalar    k, kmax, dots
     real colvector X, w, p, a, b
     real matrix    L
     
-    dots = st_local("dots")==""
-    // data
-    Name = st_local("name"+j)
-    X = st_data(., Name)
-    p = order(X, 1)
-    _collate(X, p)
-    if (st_local("wvar")!="") {
-        w = st_data(., st_local("wvar"))
-        _collate(w, p)
+    // setup
+    Name   = st_local("name"+j)
+    dots   = st_local("dots")==""
+    vtype  = st_local("type"+j)
+    dxtype = st_local("dxtype"+j)
+    kmax   = strtoreal(st_local("kmax"))
+    // determine levels
+    if (dxtype=="levels") {
+        L = strtoreal(tokens(st_local("dxlevels"))')
+        k = rows(L)
+        L = L, J(k, 1, .)
+        st_matrix(st_local("levels"+j), L)
     }
-    else w = 1
-    if (X[rows(X)]>=.) {
-        stata(`"di as err "something is wrong; {bf:"' + Name +
-            `"} has missing values within estimation sample""')
-        exit(error(498))
+    else if (dxtype=="observed") {
+        L = (.,.)
+        k = 1
     }
-    // obtain levels
-    a = selectindex(_mm_unique_tag(X))
-    if (st_local("type"+j)!="factor") {
-        // appply binning if necessary
-        k = strtoreal(st_local("kmax"))
-        if (rows(a)>k) {
-            if (dots) printf("{txt}(%s has %g levels",st_local("name"+j),rows(a))
-            _get_levels_bin(X, w, k)
+    else {
+        X = st_data(., Name)
+        if (st_local("wvar")!="") w = st_data(., st_local("wvar"))
+        else                      w = 1
+        if (dxtype=="atmean") {
+            L = (mean(X, w), .)
+            k = 1
+        }
+        else {
+            p = order(X, 1)
+            _collate(X, p)
+            if (w!=1) _collate(w, p)
+            if (X[rows(X)]>=.) {
+                stata(`"di as err "something is wrong; {bf:"' + Name +
+                    `"} has missing values within estimation sample""')
+                exit(error(498))
+            }
             a = selectindex(_mm_unique_tag(X))
-            if (dots) printf("; using binned copy with %g levels)\n",rows(a))
-            Name = st_tempname(1)
-            st_store(p, st_addvar("double", Name), X)
+            k = rows(a)
+            if (vtype!="factor" & k>kmax) { // appply binning if necessary
+                if (dots) printf("{txt}(%s has %g levels", Name, k)
+                _get_levels_bin(X, w, kmax)
+                a = selectindex(_mm_unique_tag(X))
+                k = rows(a)
+                if (dots) printf("; using %g binned levels)\n", k)
+                Name = st_tempname(1)
+                st_store(p, st_addvar("double", Name), X)
+            }
+            L = X[a]
+            b = selectindex(_mm_unique_tag(X, 1))
+            if (w==1) L = L, ((b-a):+1)
+            else      L = L, mm_diff(0 \ quadrunningsum(w)[b])
         }
     }
-    b = selectindex(_mm_unique_tag(X, 1))
-    L = X[a]
-    if (w==1) L = L, ((b-a):+1)
-    else      L = L, mm_diff(0 \ quadrunningsum(w)[b])
+    // returns
     st_matrix(st_local("levels"+j), L)
-    k = rows(L)
     st_matrixrowstripe(st_local("levels"+j), (J(k, 1, ""), strofreal(1::k)))
+    st_matrixcolstripe(st_local("levels"+j), (J(2, 1, ""), ("value","count")'))
     st_local("k"+j, strofreal(k))
-    st_local("cname"+j, Name) // name of (possibly coarened) variable
+    st_local("cname"+j, Name) // name of (possibly binned) variable
 }
 
 void _get_levels_bin(real colvector X, real colvector w, real scalar k)
@@ -1079,33 +1342,52 @@ void _lnmor_restore(real scalar ifgen)
 
 void __lnmor_update_IF()
 {
-    real scalar    touse, cons, pbar
-    real rowvector delta
-    real colvector p, dp, w
-    real matrix    IF, mIF, X
+    real matrix IF
     
-    // delta
+    st_view(IF=., ., st_local("ifs"))
+    IF[.,.] = IF + __lnmor_IF_p() * __lnmor_IF_delta()
+}
+
+real rowvector __lnmor_IF_delta()
+{
+    real scalar    touse, cons
+    real rowvector delta
+    real colvector w
+    real matrix    X
+    
     st_varrename(st_local("name"), st_local("name2"))
     st_varrename(st_local("name0"), st_local("name"))
     cons = st_local("nocons")==""
     touse = st_varindex(st_local("touse"))
     w = st_local("wvar")!="" ? st_data(., st_local("wvar"), touse) : 1
     st_view(X=., ., st_local("term"), touse)
-    delta = quadcolsum(w :* (X, J(rows(X), cons, 1))) / st_numscalar("r(sum_w)")
+    delta = quadcolsum(w :* (X, J(rows(X), cons, 1)))
     st_varrename(st_local("name"), st_local("name0"))
     st_varrename(st_local("name2"), st_local("name"))
-    // delta * (IF of p)
+    return(delta)
+}
+
+real colvector __lnmor_IF_p()
+{
+    real scalar    cons, pbar, W
+    real colvector p, dp, IF
+    real matrix    X, mIF
+    
     cons = strtoreal(st_local("mcons"))
-    w = st_local("wvar")!="" ? st_data(., st_local("wvar")) : 1
+    W = st_numscalar("r(sum_w)")
     pbar = st_numscalar("r(mean)")
     p    = st_data(., st_local("PS"))
     if (st_local("estcmd")=="probit") dp = normalden(invnormal(p))
     else                              dp = (p:*(1:-p))
+    if (st_local("wvar")!="") dp = st_data(., st_local("wvar")) :* dp
     st_view(X=., ., st_local("mvars"))
     st_view(mIF=., ., st_local("mifs"))
-    st_view(IF=., ., st_local("ifs"))
-    IF[.,.] = IF + ((p :- pbar) 
-        + mIF * quadcolsum(w:*(dp:*X, J(1, cons, dp)))') * delta
+    IF = (p :- pbar) + mIF * quadcolsum((dp:*X, J(1, cons, dp)))'
+    if (st_local("muif")!="") { // dx(atmean) correction
+        IF = IF + st_data(., st_local("muif")) * 
+            quadcolsum(dp:*st_data(., st_local("dz"))) / W
+    }
+    return(IF / st_numscalar("r(sum_w)"))
 }
 
 void __lnmor_finalize_IF()
@@ -1124,6 +1406,17 @@ void __lnmor_finalize_IF()
     p = st_data(., st_local("Y")) - p  // Y - p
     st_view(IF=., ., st_local("ifs"))
     IF[.,.] = ((X:*p, J(1,cons,p)) + IF) * G'
+}
+
+void __lnmor_dx_IF(real scalar eps)
+{
+    real scalar    pbar, sign
+    real colvector IF
+    
+    sign = st_local("j")=="1" ? -1 : 1
+    pbar = st_numscalar("r(mean)")
+    st_view(IF=., ., st_local("ifvar"))
+    IF[.,.] = IF + __lnmor_IF_p() / (sign*2*eps*pbar*(1-pbar))
 }
 
 end

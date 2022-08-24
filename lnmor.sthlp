@@ -1,5 +1,5 @@
 {smcl}
-{* 23aug2022}{...}
+{* 24aug2022}{...}
 {hi:help lnmor}{...}
 {right:{browse "http://github.com/benjann/lnmor/"}}
 {hline}
@@ -31,7 +31,7 @@
     interactions involving factor variables or are not allowed). Consecutive
     elements referring to the same variable (e.g.,
     {cmd:2.cat 3.cat 4.cat} or {cmd:x1 c.x1#c.x1 c.x1#c.x1#c.x1})
-    will be merged into a single term (as long as they are of the type). Likewise,
+    will be merged into a single term (as long as they are of the same type). Likewise,
     {varlist} specifications such as {cmd:x*} or {cmd:x1-x5}, or groups
     such as {cmd:i.(var1 var2)} will be split into separate terms, one
     for each variable. In general, each {it:term} must refer to a distinct
@@ -44,6 +44,11 @@
 {marker opt}{synopthdr:options}
 {synoptline}
 {syntab :Main}
+{synopt:{cmdab:dx}[{cmd:(}{help lnmor##dx:{it:spec}}{cmd:)}]}use derivative-based
+    evaluation method instead of fractional logit
+    {p_end}
+{synopt:{opt eps:ilon(#)}}tuning constant for {cmd:dx()}
+    {p_end}
 {synopt:{cmdab:at(}{help lnmor##at:{it:spec}}{cmd:)}}estimate results at
     specified values of covariates
     {p_end}
@@ -53,6 +58,8 @@
     kicks in; default is {cmd:kmax(100)}
     {p_end}
 {synopt :{opt nodot:s}}suppress progress dots
+    {p_end}
+{synopt :{opt nowarn}}suppress variable type warning messages
     {p_end}
 {synopt :{opt post}}post results in {cmd:e()}
     {p_end}
@@ -88,8 +95,8 @@
 {pstd}
     {cmd:lnmor} computes (adjusted) marginal odds ratios
     after {helpb logit} or {helpb probit} using G-computation. {cmd:lnmor}
-    works by applying fractional logit to averaged counterfactual predictions
-    from the original model.
+    works by applying fractional logit ({helpb fracreg})
+    to averaged counterfactual predictions from the original model.
 
 {pstd}
     {cmd:lnmor} requires {helpb moremata} to be installed on the system. Type
@@ -97,6 +104,45 @@
 
 
 {title:Options}
+
+{marker dx}{...}
+{phang}
+    {cmdab:dx}[{cmd:(}{it:spec}{cmd:)}] uses an alternative evaluation method
+    to obtain results. By default, {cmd:lnmor} generates population-averaged
+    counterfactual predictions for each level of a variable and then computes
+    the marginal OR by applying fractional logit ({helpb fracreg}) to these
+    averaged predictions. Alternatively, if {cmd:dx()} is specified, results
+    will be obtained by taking numerical derivatives of population-averaged
+    counterfactual predictions. This is only relevant for continuous terms
+    that do not include interactions. That is, {cmd:dx()} will be ignored
+    for factor-variable terms and interaction terms. {cmd:dx()} will also be
+    ignored if a term is specified as continuous in {cmd:lnmor}, but the relevant
+    variable has been included as a factor variable in the original model. {it:spec}
+    may be one of the following.
+
+{p2colset 13 24 27 2}{...}
+{p2col:{opt ave:rage}}report the average derivative across the distribution
+    of the variable
+    {p_end}
+{p2col:{opt atm:ean}}report the derivative at the mean of the variable
+    {p_end}
+{p2col:{opt obs:erved}}report a derivative based on a marginal shift in
+    observed values
+    {p_end}
+{p2col:{opt .}}same as {cmd:observed}
+    {p_end}
+{p2col:{help numlist:{it:numlist}}}report derivative at each specified level
+    {p_end}
+
+{pmore}
+    {cmd:dx} without argument is equivalent to {cmd:dx(average)}.
+
+{phang}
+    {opt epsilon(#)} sets the tuning constant for the numerical derivatives
+    taken by {cmd:dx()}. The default value is {cmd:exp(log(c(epsdouble))/3)}. This
+    should work well in most situations. You may need to increase the value if
+    {cmd:lnmor} returns a zero result for a variable even though the variable
+    has a non-zero effect in the original model
 
 {marker at}{...}
 {phang}
@@ -121,10 +167,15 @@
     {opt kmax(#)} sets the maximum number of levels (distinct values) that are
     allowed for continuous predictors. If a variable has more levels,
     {cmd:lnmor} will provide approximate results based on a linearly binned
-    variable.
+    levels. The default is {cmd:kmax(100)}.
 
 {phang}
     {opt nodots} suppresses the progress dots.
+
+{phang}
+    {opt nowarn} suppresses the warning messages that are displayed if the types
+    of the specified terms do not match the types of the
+    relevant variables in the original model.
 
 {phang}
     {opt post} stores results in {cmd:e()} rather than in {cmd:r()}. {cmd:post}
@@ -148,7 +199,7 @@
 {phang}
     {opt nose} suppresses calculation of the VCE and standard errors. The
     variance matrix will be set to zero in this case. To save computer time,
-    {cmd:nose} is implied if {cmd:vce(bootstrap)} or {cmd:vce(jackknife)} is specified
+    {cmd:nose} is implied by {cmd:vce(bootstrap)} and {cmd:vce(jackknife)},
     or if {cmd:lnmor} is applied after {helpb svy} with replication-based VCE. Option
     {cmd:nose} is not allowed after {helpb svy} with linearization-based VCE or after
     {helpb mi estimate}.
@@ -217,24 +268,65 @@
 {pstd}
     Use option {cmd:at()} to explore interactions:
 
-        . {stata logit low i.smoke i.race age lwt ptl ht ui i.smoke#i.race, or}
-        . {stata lnmor i.smoke, at(race) or}
+{p 8 12 2}. {stata logit low i.smoke i.race age lwt ptl ht ui i.smoke#i.race, or}{p_end}
+{p 8 12 2}. {stata lnmor i.smoke, at(race) or}{p_end}
 
 {pstd}
     Use {cmd:ibn.}{it:varname} to obtain marginal odds by level rather than odds ratios:
 
-        . {stata logit low i.smoke i.race age lwt ptl ht ui i.smoke#i.race, or}
-        . {stata lnmor ibn.smoke, at(race) or}
+{p 8 12 2}. {stata logit low i.smoke i.race age lwt ptl ht ui i.smoke#i.race, or}{p_end}
+{p 8 12 2}. {stata lnmor ibn.smoke, at(race) or}{p_end}
 
 {pstd}
     For categorical predictors, a combination of {helpb margins} and {helpb nlcom}
     can be used to replicate the results by {cmd:lnmor}:
 
-        . {stata logit low i.smoke i.race age lwt ptl ht ui, vce(robust)}
-        . {stata lnmor i.smoke, or}
-        . {stata margins, at(smoke=(0 1)) post vce(unconditional)}
-        . {stata "nlcom (smoke:(logit(_b[2._at]) - logit(_b[1._at]))), post"}
-        . {stata ereturn display, eform(Odds Ratio)}
+{p 8 12 2}. {stata logit low i.smoke i.race age lwt ptl ht ui, vce(robust)}{p_end}
+{p 8 12 2}. {stata lnmor i.smoke, or}{p_end}
+{p 8 12 2}. {stata margins, at(smoke=(0 1)) post vce(unconditional)}{p_end}
+{p 8 12 2}. {stata "nlcom (smoke:(logit(_b[2._at]) - logit(_b[1._at]))), post"}{p_end}
+{p 8 12 2}. {stata ereturn display, eform(Odds Ratio)}{p_end}
+
+{dlgtab:Nonlinear effects}
+
+{pstd}
+    Nonlinear effects can, for example, be explored using the {cmd:dx()}
+    option. Example:
+
+{p 8 12 2}. {stata sysuse nlsw88}{p_end}
+{p 8 12 2}. {stata logit union i.south grade c.grade#c.grade c.grade#c.grade#c.grade age}{p_end}
+{p 8 12 2}. {stata levelsof grade}{p_end}
+{p 8 12 2}. {stata lnmor grade, dx(`r(levels)') post}{p_end}
+
+{pstd}
+    The output reports the marginal (log) odds ratio at different levels of
+    {cmd:grade}. Graphically, the pattern looks as follows (type
+    {cmd:ssc install coefplot} to make {cmd:coefplot} available on your system):
+
+        . {stata estimates store dx}
+        . {stata coefplot dx, at(levels1[,1]) yline(0) yti(ln OR)}
+
+{pstd}
+    The effect appears to be positive at the bottom and at the top, and negative
+    in the middle.
+
+{pstd}
+    A similar analysis could also be performed by specifying interaction terms
+    when calling {cmd:lnmor}:
+
+{p 8 12 2}. {stata logit union i.south grade c.grade#c.grade c.grade#c.grade#c.grade age}{p_end}
+{p 8 12 2}. {stata lnmor grade c.grade#c.grade c.grade#c.grade#c.grade}{p_end}
+
+{pstd}
+    Qualitatively, results from the two approaches are very similar, as can be
+    illustrated as follows:
+
+{p 8 12 2}. {stata local function `=el(r(b),1,1)' + 2*`=el(r(b),1,2)'*x + 3*`=el(r(b),1,3)'*x^2}{p_end}
+{p 8 12 2}. {stata coefplot dx, at(levels1[,1]) yline(0) yti(ln OR) addplot(function `function', range(0 18))}{p_end}
+
+{pstd}
+    As is evident, the effect function from the second approach matches the
+    point estimates from the first approach very well.
 
 {dlgtab:Bootstrap standard errors}
 
@@ -296,6 +388,7 @@
 {synopt:{cmd:r(df_r)}}{cmd:r(N)}-1 or {cmd:r(N_clust)}-1{p_end}
 {synopt:{cmd:r(nterms)}}number of terms{p_end}
 {synopt:{cmd:r(k}{it:#}{cmd:)}}number levels in term {it:#}{p_end}
+{synopt:{cmd:r(dx}{it:#}{cmd:)}}whether {cmd:dx()} has been applied to term {it:#}{p_end}
 {synopt:{cmd:r(rank)}}rank of {cmd:r(V)}{p_end}
 
 {p2col 5 23 26 2: Macros}{p_end}
@@ -308,6 +401,8 @@
 {synopt:{cmd:r(term}{it:#}{cmd:)}}specification of term {it:#}{p_end}
 {synopt:{cmd:r(name}{it:#}{cmd:)}}variable name of term {it:#}{p_end}
 {synopt:{cmd:r(type}{it:#}{cmd:)}}{cmd:factor}, {cmd:variable}, or {cmd:interaction}; type of term {it:#}{p_end}
+{synopt:{cmd:r(dxtype}{cmd:)}}{cmd:average}, {cmd:atmean}, {cmd:observed}, {cmd:levels}, or empty{p_end}
+{synopt:{cmd:r(dxlevels}{cmd:)}}levels specified in {cmd:dx()}{p_end}
 {synopt:{cmd:r(atnames)}}variable names from {cmd:at()}{p_end}
 {synopt:{cmd:r(wtype)}}weight type{p_end}
 {synopt:{cmd:r(wexp)}}weight expression{p_end}
@@ -351,8 +446,8 @@ added.
     Thanks for citing this software as follows:
 
 {pmore}
-    Jann, B. (2022). lnmor: Stata module to compute marginal odds ratios after model estimation. Available from
-    {browse "http://github.com/benjann/lnmor/"}.
+    Jann, B. (2022). lnmor: Stata module to compute marginal odds
+    ratios after model estimation. Available from {browse "http://github.com/benjann/lnmor/"}.
 
 
 {title:Also see}
