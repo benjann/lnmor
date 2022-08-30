@@ -1,4 +1,4 @@
-*! version 1.0.4  24aug2022  Ben Jann
+*! version 1.0.5  30aug2022  Ben Jann
 
 program lnmor
     version 14
@@ -362,7 +362,7 @@ program Display
         foreach l of local dxlevels {
             local ++j
             local l `:di %7.4g `l''
-            local l ", (`j') `l'"
+            local l ", (`j') at `l'"
             local l1 = strlen("`l'")
             if ((`l0'+`l1')>(`lsize'-4)) {
                 if ((`l0'+`l1')<=`lsize') {
@@ -383,14 +383,15 @@ end
 program _lnmor, rclass
     syntax varlist(numeric fv) [, nowarn /*
         */ kmax(numlist int max=1 >1 missingokay) /*
-        */ dx DX2(passthru) EPSilon(numlist max=1 >0) /* 
+        */ dx DX2(passthru) EPSilon EPSilon2(numlist max=1 >0) /* 
         */ at(passthru) atmax(int 50) noDOTs NOSE /*
         */ IFGENerate(str) replace saveifuninmata ]
     
-    // defaults etc
+    // defaults
     if "`kmax'"==""    local kmax 100
-    if "`epsilon'"=="" local epsilon = exp(log(c(epsdouble))/3)
     if "`warn'"!=""    local warn qui
+    if      "`epsilon2'"!="" local eps "`epsilon2'"
+    else if "`epsilon'"!=""  local eps = exp(log(c(epsdouble))/3)
     
     // parse dx() option
     _parse_dx, `dx' `dx2' // returns dx, dxtype, dxlevels
@@ -531,8 +532,8 @@ program _lnmor, rclass
                 rename `cname`j'' `name`j''
             }
             if "`dots'"=="" {
-                if "`dxtype`j''"!="" local kj = `k`j'' * 2
-                else                 local kj   `k`j''
+                if "`dxtype`j''"!="" & "`eps'"!="" local kj = `k`j'' * 2
+                else                               local kj   `k`j''
                 _progress_info "`name`j''[`kj']" `lpos' `lsize'
             }
             local opts /*
@@ -541,7 +542,7 @@ program _lnmor, rclass
                 */ mvars(`mvars') mcons(`mcons') estcmd(`est_cmd') /*
                 */ lsize(`lsize') lpos(`lpos') `dots'
             if "`dxtype`j''"!="" {
-                _lnmor_dx, type(`dxtype`j'') eps(`epsilon') `opts'
+                _lnmor_dx, type(`dxtype`j'') eps(`eps') `opts'
             }
             else {
                 __lnmor, term(`term`j'') type(`type`j'') bn(`bn`j'') `opts'
@@ -629,6 +630,7 @@ program _lnmor, rclass
     if `hasdx' {
         return local dxtype       "`dxtype'"
         return local dxlevels     "`dxlevels'"
+        if "`eps'"!="" return scalar epsilon = `eps'
     }
     if `hasat' {
         return local atvars     "`at'"
@@ -729,9 +731,19 @@ program _collect_model_info
     c_local mvars `r(varlist1)'
     foreach t in `r(varlist1)' {
         _ms_parse_parts `t'
-        local names `names' `r(name)'
-        if r(type)=="factor" {
-            local fv `fv' `r(name)'
+        if inlist(r(type), "interaction", "product") {
+            forv j = 1/`r(k_names)' {
+                local names `names' `r(name`j')'
+                if !inlist(r(op`j'),"c","co") {
+                    local fv `fv' `r(name`j')'
+                }
+            }
+        }
+        else {
+            if r(type)=="factor" {
+                local fv `fv' `r(name)'
+            }
+            local names `names' `r(name)'
         }
     }
     c_local mnames: list uniq names
@@ -783,7 +795,7 @@ program _collect_fvinfo
          local name `Name'
          if r(base)==1 local bn 0
     }
-     _collect_fvinfo_bn "`type'" "`term'" `bn'
+    _collect_fvinfo_bn "`type'" "`term'" `bn'
     c_local term`J' "`term'"
     c_local type`J' "`type'"
     c_local name`J' "`name'"
@@ -959,7 +971,7 @@ program __lnmor, rclass
     }
     
     // run
-    tempname l
+    tempname l pbar
     tempvar name0 name1 name2 p w PS
     rename `name' `name0'
     if `vce' {
@@ -976,12 +988,13 @@ program __lnmor, rclass
         qui replace `name' = `l'
         qui predict double `PS', pr
         su `PS' `wgt', meanonly
-        qui replace `p'     = r(mean) in `i'
+        scalar `pbar' = r(mean)
+        qui replace `p'     = `pbar' in `i'
         qui replace `w'     = `levels'[`i',2] in `i'
         qui replace `name1' = `l' in `i'
         if `vce' {
             qui replace `touse' = `name0'==`l'
-            qui replace `Y' = r(mean) if `touse'
+            qui replace `Y' = `pbar' if `touse'
             mata: __lnmor_update_IF()
         }
         drop `PS'
@@ -1032,13 +1045,21 @@ program __lnmor, rclass
 end
 
 program _lnmor_dx, rclass
-    syntax, type(str) eps(passthru) name(str) levels(str) k(str) /*
-         */ estcmd(passthru) mcons(passthru) [ wvar(passthru) ifs(str) /*
+    syntax, type(str) name(str) levels(str) k(str) estcmd(passthru) /*
+         */ mcons(passthru) [ eps(passthru) wvar(passthru) ifs(str) /*
          */ mifs(passthru) mvars(passthru) lsize(passthru) lpos(str) nodots ]
+    
+    // helper vector for deriviatives of the linear predictor
+    local vce = `"`ifs'"'!=""
+    if "`eps'"=="" | (`vce' & "`type'"=="atmean") {
+        tempname dzb
+        matrix `dzb' = e(b)
+        _ms_dzb_dx `name', matrix(`dzb') // undocumented utility of -margins-
+        matrix `dzb' = r(b)
+    }
     
     // average of level-specific dx
     if "`type'"=="average" {
-        local vce = `"`ifs'"'!=""
         if `vce' {
             qui gen double `ifs' = 0
             tempname IF
@@ -1050,7 +1071,7 @@ program _lnmor_dx, rclass
         forv i = 1/`k' {
             __lnmor_dx, `eps' name(`name') levels(`levels') i(`i') `wvar' /*
                 */ `estcmd' ifvar(`IF') `mcons' `mifs' `mvars' `lsize' /*
-                */ lpos(`lpos') `dots'
+                */ lpos(`lpos') `dots' dzb(`dzb')
             mat `b' = `b' + r(b) * `p'[`i',1]
             if `vce' {
                 qui replace `ifs' = `ifs' + (`p'[`i',1] * `IF' ///
@@ -1064,22 +1085,14 @@ program _lnmor_dx, rclass
     }
     // dx at mean
     if "`type'"=="atmean" {
-        // obtain IF of mean and derivative of linear predictor
-        tempvar muIF dz xb name0
-        qui gen double `muIF' = `name' - `levels'[1,1]
-        rename `name' `name0'
-        qui gen byte `name' = 1
-        qui predict double `dz', xb
-        qui replace `name' = 0
-        qui predict double `xb', xb
-        qui replace `dz' = `dz' - `xb'
-        drop `xb' `name'
-        rename `name0' `name'
-        // compute OR
+        if `vce' {
+            tempvar muIF // IF of mean
+            qui gen double `muIF' = `name' - `levels'[1,1]
+        }
         tempname b
         __lnmor_dx, `eps' name(`name') levels(`levels') i(1) `wvar' /*
             */ `estcmd' ifvar(`ifs') `mcons' `mifs' `mvars' `lsize' /*
-            */ lpos(`lpos') `dots' muif(`muIF') dz(`dz')
+            */ lpos(`lpos') `dots' muif(`muIF') dzb(`dzb')
         mat `b' = r(b)
         mat coln `b' = `name'(*)
         return matrix b = `b'
@@ -1090,7 +1103,7 @@ program _lnmor_dx, rclass
         tempname b
         __lnmor_dx, `eps' name(`name') levels(`levels') i(1) `wvar' /*
             */ `estcmd' ifvar(`ifs') `mcons' `mifs' `mvars' `lsize' /*
-            */ lpos(`lpos') `dots'
+            */ lpos(`lpos') `dots' dzb(`dzb')
         mat `b' = r(b)
         mat coln `b' = `name'(*)
         return matrix b = `b'
@@ -1105,7 +1118,7 @@ program _lnmor_dx, rclass
         gettoken IF ifs : ifs
         __lnmor_dx, `eps' name(`name') levels(`levels') i(`i') `wvar' /*
             */ `estcmd' ifvar(`IF') `mcons' `mifs' `mvars' `lsize' /*
-            */ lpos(`lpos') `dots'
+            */ lpos(`lpos') `dots' dzb(`dzb')
         mat `b'[1,`i'] = r(b)
     }
     mat coln `b' = `coln'
@@ -1113,9 +1126,9 @@ program _lnmor_dx, rclass
 end
 
 program __lnmor_dx, rclass
-    syntax, eps(str) name(str) levels(str) i(str) /*
-         */ estcmd(str) mcons(str) [ wvar(str) ifvar(str) mifs(str) /*
-         */ mvars(str) muif(str) dz(str) lsize(str) lpos(str) nodots ]
+    syntax, name(str) levels(str) i(str) estcmd(str) mcons(str) /*
+         */ [ eps(str) wvar(str) ifvar(str) mifs(str) /*
+         */ mvars(str) muif(str) dzb(str) lsize(str) lpos(str) nodots ]
     
     // weights
     if "`wvar'"!="" local wgt "[aw=`wvar']"
@@ -1127,30 +1140,73 @@ program __lnmor_dx, rclass
     }
     
     // run
-    tempname p1 p2 l
-    tempvar name0 PS l
-    rename `name' `name0'
-    qui gen double `name' = .
+    tempname b l
     scalar `l' = `levels'[`i',1]
-    if `l'>=. local lev `name0'
-    else      local lev `l'
-    forv j = 1/2 {
-        local sign = cond(`j'==1, "-", "+")
-        qui replace `name' = `lev' `sign' `eps'
-        qui predict double `PS', pr
-        su `PS' `wgt', meanonly
-        scalar `p`j'' = r(mean)
-        if `vce' {
-            mata: __lnmor_dx_IF(`eps')
+    if "`eps'"=="" {
+        if "`muif'"!="" {
+            tempname ddzb
+            _ms_dzb_dx `name', matrix(`dzb')
+            matrix `ddzb' = r(b)
         }
-        drop `PS'
+        if `l'<. {
+            tempvar name0
+            rename `name' `name0'
+            qui gen double `name' = `l'
+        }
+        tempvar Q PS dz
+        tempname qbar pbar
+        qui matrix score double `dz' = `dzb'
+        qui predict double `PS', pr
+        if "`estcmd'"=="probit" qui gen double `Q' = normalden(invnormal(`PS')) * `dz'
+        else                    qui gen double `Q' = `PS' * (1-`PS') * `dz'
+        su `Q' `wgt', meanonly
+        scalar `qbar' = r(mean)
+        su `PS' `wgt', meanonly
+        scalar `pbar' = r(mean)
+        if `vce' {
+            if "`muif'"!="" {
+                tempvar  ddz
+                qui matrix score double `ddz' = `ddzb'
+            }
+            mata: __lnmor_dx_IF()
+        }
+        scalar `b' = `qbar' / (`pbar' * (1 - `pbar'))
         if "`dots'"=="" _progress_info "." `lpos' `lsize'
+        if `l'<. {
+            drop `name'
+            rename `name0' `name'
+        }
     }
-    drop `name'
-    rename `name0' `name'
+    else {
+        if "`muif'"!="" tempvar dz
+        tempname p1 p2
+        tempvar name0 PS
+        rename `name' `name0'
+        qui gen double `name' = .
+        if `l'>=. local lev `name0'
+        else      local lev `l'
+        forv j = 1/2 {
+            local sign = cond(`j'==1, "-", "+")
+            qui replace `name' = `lev' `sign' `eps'
+            qui predict double `PS', pr
+            su `PS' `wgt', meanonly
+            scalar `p`j'' = r(mean)
+            local pbar `p`j''
+            if `vce' {
+                if "`muif'"!="" qui matrix score double `dz' = `dzb'
+                mata: __lnmor_dxeps_IF(`eps')
+                if "`muif'"!="" drop `dz'
+            }
+            drop `PS'
+            if "`dots'"=="" _progress_info "." `lpos' `lsize'
+        }
+        scalar `b' = (logit(`p2') - logit(`p1')) / (2*`eps')
+        drop `name'
+        rename `name0' `name'
+    }
     
     // returns
-    return scalar b = (logit(`p2') - logit(`p1')) / (2*`eps')
+    return scalar b = `b'
     c_local lpos `lpos'
 end
 
@@ -1345,7 +1401,7 @@ void __lnmor_update_IF()
     real matrix IF
     
     st_view(IF=., ., st_local("ifs"))
-    IF[.,.] = IF + __lnmor_IF_p() * __lnmor_IF_delta()
+    IF[.,.] = IF + __lnmor_IF_p(0) * __lnmor_IF_delta()
 }
 
 real rowvector __lnmor_IF_delta()
@@ -1361,33 +1417,107 @@ real rowvector __lnmor_IF_delta()
     touse = st_varindex(st_local("touse"))
     w = st_local("wvar")!="" ? st_data(., st_local("wvar"), touse) : 1
     st_view(X=., ., st_local("term"), touse)
-    delta = quadcolsum(w :* (X, J(rows(X), cons, 1)))
+    delta = __lnmor_colsum(w, X, cons)
     st_varrename(st_local("name"), st_local("name0"))
     st_varrename(st_local("name2"), st_local("name"))
     return(delta)
 }
 
-real colvector __lnmor_IF_p()
+real rowvector __lnmor_colsum(real colvector w, real matrix X, real scalar cons)
+{
+    real scalar    j, k
+    real rowvector sum
+    
+    k = cols(X)
+    j = k + cons
+    sum = J(1, j, .)
+    if (j>k) {
+        if (rows(w)==1) sum[j] = w * rows(X)
+        else            sum[j] = quadsum(w)
+        j--
+    }
+    for (;j;j--) sum[j] = quadsum(w :* X[,j])
+    return(sum)
+}
+
+real matrix __lnmor_IF_p(real scalar hasq)
 {
     real scalar    cons, pbar, W
-    real colvector p, dp, IF
-    real matrix    X, mIF
+    real colvector p, dp, dz, muIF
+    real matrix    IF, X, mIF
     
     cons = strtoreal(st_local("mcons"))
-    W = st_numscalar("r(sum_w)")
-    pbar = st_numscalar("r(mean)")
+    W    = st_numscalar("r(sum_w)")
+    pbar = st_numscalar(st_local("pbar"))
     p    = st_data(., st_local("PS"))
     if (st_local("estcmd")=="probit") dp = normalden(invnormal(p))
-    else                              dp = (p:*(1:-p))
+    else                              dp = p :* (1 :- p)
     if (st_local("wvar")!="") dp = st_data(., st_local("wvar")) :* dp
     st_view(X=., ., st_local("mvars"))
     st_view(mIF=., ., st_local("mifs"))
-    IF = (p :- pbar) + mIF * quadcolsum((dp:*X, J(1, cons, dp)))'
-    if (st_local("muif")!="") { // dx(atmean) correction
-        IF = IF + st_data(., st_local("muif")) * 
-            quadcolsum(dp:*st_data(., st_local("dz"))) / W
+    if (st_local("dz")!="") dz = st_data(., st_local("dz"))
+    IF = (p :- pbar) + mIF * __lnmor_colsum(dp, X, cons)'
+    if (st_local("muif")!="") {
+        // dx(atmean) correction
+        muIF = st_data(., st_local("muif")) // has not been divided by W
+        IF = IF + muIF * (quadcolsum(dp :* dz) / W)
     }
-    return(IF / st_numscalar("r(sum_w)"))
+    if (hasq) IF = IF, __lnmor_IF_q(p, dp, X, mIF, cons, dz, muIF, W)
+    return(IF / W)
+}
+
+real matrix __lnmor_IF_q(real colvector p, real colvector dp, real matrix X,
+    real matrix mIF, real scalar cons, real colvector dz, real colvector muIF,
+    real scalar W)
+{
+    real scalar    qbar
+    real colvector q, dq, IF
+
+    qbar = st_numscalar(st_local("qbar"))
+    q    = st_data(., st_local("Q"))
+    if (st_local("estcmd")=="probit") dq = -invnormal(p) :* dz
+    else                              dq = (1 :- 2*p)    :* dz
+    IF = (q :- qbar) + mIF * __lnmor_IF_q_colsum(dp, dq, X, cons)'
+    if (st_local("muif")!="") {
+        IF = IF + muIF * 
+            (quadcolsum(dp :* (dq :* dz :+ st_data(., st_local("ddz")))) / W) 
+    }
+    return(IF)
+}
+
+real rowvector __lnmor_IF_q_colsum(real colvector dp, real colvector dq,
+    real matrix X, real scalar cons)
+{
+    real scalar      j, k
+    real colvector   dpdq
+    real rowvector   sum, dzb, dzbp
+    string rowvector dzbx
+    real matrix      dzbX
+    
+    // prepare info from dzb
+    dzb  = editmissing(st_matrix(st_local("dzb")) :/ st_matrix("e(b)"), 0)
+    dzbx = st_matrixcolstripe(st_local("dzb"))[,2]'
+    dzbp = J(1, j = cols(dzb), 0)
+    for (j=cols(dzbx); j; j--) {
+        if (dzbx[j]=="_cons")   continue
+        if (dzbx[j]=="o._cons") continue // is this possible?
+        dzbp[j] = 1
+    }
+    if (any(dzbp)) st_view(dzbX=., ., select(dzbx, dzbp))
+    else           dzbX = J(0,0,.)
+    // compute components
+    k = cols(X)
+    j = k + cons
+    sum = J(1, j, .)
+    dpdq = dp :* dq
+    if (j>k) sum[j--] = quadsum(dpdq)
+    k = cols(dzbX)
+    for (;j;j--) {
+        if (dzbp[j])     sum[j] = quadsum(dp:*(dq:*X[,j] :+ dzb[j]:*dzbX[,k--]))
+        else if (dzb[j]) sum[j] = quadsum(dp:*(dq :* X[,j] :+ dzb[j]))
+        else             sum[j] = quadsum(dpdq :* X[,j])
+    }
+    return(sum)
 }
 
 void __lnmor_finalize_IF()
@@ -1408,15 +1538,27 @@ void __lnmor_finalize_IF()
     IF[.,.] = ((X:*p, J(1,cons,p)) + IF) * G'
 }
 
-void __lnmor_dx_IF(real scalar eps)
+void __lnmor_dx_IF()
 {
-    real scalar    pbar, sign
+    real scalar p, q
+    real matrix IF
+    
+    q  = st_numscalar(st_local("qbar"))
+    p  = st_numscalar(st_local("pbar"))
+    IF = __lnmor_IF_p(1)
+    st_store(., st_local("ifvar"), (1 / (p*(1-p))) * (IF[,2] +
+        (q*(2*p-1)/(p*(1-p))) * IF[,1]))
+}
+
+void __lnmor_dxeps_IF(real scalar eps)
+{
+    real scalar    p, sign
     real colvector IF
     
     sign = st_local("j")=="1" ? -1 : 1
-    pbar = st_numscalar("r(mean)")
+    p    = st_numscalar(st_local("pbar"))
     st_view(IF=., ., st_local("ifvar"))
-    IF[.,.] = IF + __lnmor_IF_p() / (sign*2*eps*pbar*(1-pbar))
+    IF[.,.] = IF + __lnmor_IF_p(0) / (sign * 2 * eps * p * (1 - p))
 }
 
 end

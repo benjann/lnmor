@@ -22,6 +22,10 @@ to install `moremata`.
 
 Main changes:
 
+    30aug2022 (version 1.0.5)
+    - dx() now takes derivatives analytically; can specify -epsilon- for old
+      behavior
+    
     24aug2022 (version 1.0.4)
     - options dx(), epsilon(), and nowarn added
 

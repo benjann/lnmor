@@ -1,5 +1,5 @@
 {smcl}
-{* 24aug2022}{...}
+{* 30aug2022}{...}
 {hi:help lnmor}{...}
 {right:{browse "http://github.com/benjann/lnmor/"}}
 {hline}
@@ -47,7 +47,7 @@
 {synopt:{cmdab:dx}[{cmd:(}{help lnmor##dx:{it:spec}}{cmd:)}]}use derivative-based
     evaluation method instead of fractional logit
     {p_end}
-{synopt:{opt eps:ilon(#)}}tuning constant for {cmd:dx()}
+{synopt:{cmdab:eps:ilon}[{cmd:(}{it:#}{cmd:)}]}obtain derivatives numerically
     {p_end}
 {synopt:{cmdab:at(}{help lnmor##at:{it:spec}}{cmd:)}}estimate results at
     specified values of covariates
@@ -112,7 +112,7 @@
     counterfactual predictions for each level of a variable and then computes
     the marginal OR by applying fractional logit ({helpb fracreg}) to these
     averaged predictions. Alternatively, if {cmd:dx()} is specified, results
-    will be obtained by taking numerical derivatives of population-averaged
+    will be obtained by taking derivatives of population-averaged
     counterfactual predictions. This is only relevant for continuous terms
     that do not include interactions. That is, {cmd:dx()} will be ignored
     for factor-variable terms and interaction terms. {cmd:dx()} will also be
@@ -138,11 +138,15 @@
     {cmd:dx} without argument is equivalent to {cmd:dx(average)}.
 
 {phang}
-    {opt epsilon(#)} sets the tuning constant for the numerical derivatives
-    taken by {cmd:dx()}. The default value is {cmd:exp(log(c(epsdouble))/3)}. This
-    should work well in most situations. You may need to increase the value if
-    {cmd:lnmor} returns a zero result for a variable even though the variable
-    has a non-zero effect in the original model
+    {cmd:epsilon}[{cmd:(}{it:#}{cmd:)}] requests that {cmd:dx()} takes derivatives
+    numerically rather than analytically. Numerical derivatives are computed as the
+    difference in population-averaged log odds at t+{it:#} and t-{it:#}, divided by
+    2*{it:#}, where t is the treatment value at which the derivative is
+    evaluated. If {cmd:epsilon} is specified without argument, {it:#} is set
+    to {cmd:exp(log(c(epsdouble))/3)}. With such a setting, results will typically
+    be the same as without the {cmd:epsilon} option. However, you could, for
+    example, specify {cmd:epsilon(0.5)} to obtain unit change effects instead of
+    derivatives.
 
 {marker at}{...}
 {phang}
@@ -166,7 +170,7 @@
 {phang}
     {opt kmax(#)} sets the maximum number of levels (distinct values) that are
     allowed for continuous predictors. If a variable has more levels,
-    {cmd:lnmor} will provide approximate results based on a linearly binned
+    {cmd:lnmor} will provide approximate results based on linearly binned
     levels. The default is {cmd:kmax(100)}.
 
 {phang}
@@ -389,6 +393,7 @@
 {synopt:{cmd:r(nterms)}}number of terms{p_end}
 {synopt:{cmd:r(k}{it:#}{cmd:)}}number levels in term {it:#}{p_end}
 {synopt:{cmd:r(dx}{it:#}{cmd:)}}whether {cmd:dx()} has been applied to term {it:#}{p_end}
+{synopt:{cmd:r(epsilon)}}value of {cmd:epsilon()}, if specified{p_end}
 {synopt:{cmd:r(rank)}}rank of {cmd:r(V)}{p_end}
 
 {p2col 5 23 26 2: Macros}{p_end}
