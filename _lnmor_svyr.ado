@@ -1,8 +1,8 @@
-*! version 1.0.1  23aug2022  Ben Jann
+*! version 1.0.2  31aug2022  Ben Jann
 *! helper program for -lnmor- after -svy-; do not use manually
 
 program _lnmor_svyr, eclass properties(svyr)
-    version 14
+    version 15
     local version : di "version " string(_caller()) ":"
     `version' lnmor `0'
     local k_eq = e(k_eq)
@@ -15,7 +15,7 @@ program _lnmor_svyr, eclass properties(svyr)
     eret local predict "_lnmor_svyr_p"
 end
 
-version 14
+version 15
 mata:
 mata set matastrict on
 

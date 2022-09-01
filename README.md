@@ -22,6 +22,14 @@ to install `moremata`.
 
 Main changes:
 
+    01sep2022 (version 1.0.6)
+    - lnmor now requires Stata version 15 or newer
+    - can now type dx(levels) to report derivative at each observed level
+    - new option delta() causes dx() to compute discrete-change effects rather than
+      derivatives; new options -centered- and -normalize- provide settings; option
+      -epsilon- is now undocumented (epsilon is equivalent to
+      -delta(#) centered normalize- with # = 2*exp(log(c(epsdouble))/3))
+
     30aug2022 (version 1.0.5)
     - dx() now takes derivatives analytically; can specify -epsilon- for old
       behavior

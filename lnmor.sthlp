@@ -1,5 +1,5 @@
 {smcl}
-{* 30aug2022}{...}
+{* 01sep2022}{...}
 {hi:help lnmor}{...}
 {right:{browse "http://github.com/benjann/lnmor/"}}
 {hline}
@@ -45,9 +45,14 @@
 {synoptline}
 {syntab :Main}
 {synopt:{cmdab:dx}[{cmd:(}{help lnmor##dx:{it:spec}}{cmd:)}]}use derivative-based
-    evaluation method instead of fractional logit
+    evaluation method instead of fractional logit (continuous terms only)
     {p_end}
-{synopt:{cmdab:eps:ilon}[{cmd:(}{it:#}{cmd:)}]}obtain derivatives numerically
+{synopt:{cmd:delta}[{cmd:(}{it:#}{cmd:)}]}let {cmd:dx()} compute 
+    discrete change effects rather than derivatives
+    {p_end}
+{synopt:{opt center:ed}}use symmetric definition of discrete change effects
+    {p_end}
+{synopt:{opt norm:alize}}normalize discrete change effects
     {p_end}
 {synopt:{cmdab:at(}{help lnmor##at:{it:spec}}{cmd:)}}estimate results at
     specified values of covariates
@@ -107,22 +112,22 @@
 
 {marker dx}{...}
 {phang}
-    {cmdab:dx}[{cmd:(}{it:spec}{cmd:)}] uses an alternative evaluation method
-    to obtain results. By default, {cmd:lnmor} generates population-averaged
-    counterfactual predictions for each level of a variable and then computes
-    the marginal OR by applying fractional logit ({helpb fracreg}) to these
-    averaged predictions. Alternatively, if {cmd:dx()} is specified, results
-    will be obtained by taking derivatives of population-averaged
-    counterfactual predictions. This is only relevant for continuous terms
-    that do not include interactions. That is, {cmd:dx()} will be ignored
-    for factor-variable terms and interaction terms. {cmd:dx()} will also be
-    ignored if a term is specified as continuous in {cmd:lnmor}, but the relevant
-    variable has been included as a factor variable in the original model. {it:spec}
-    may be one of the following.
+    {cmdab:dx}[{cmd:(}{it:spec}{cmd:)}] uses a derivative-based approach
+    to compute results for continuous terms. By default, {cmd:lnmor} generates
+    population-averaged counterfactual predictions for each level of a variable
+    and then computes the marginal OR by applying fractional logit 
+    ({helpb fracreg}) to these averaged predictions. Alternatively, if
+    {cmd:dx()} is specified, results will be obtained by taking derivatives of
+    population-averaged counterfactual predictions. This is only relevant for
+    continuous terms that do not include interactions. That is, {cmd:dx()} will
+    be ignored for factor-variable terms and interaction terms. {cmd:dx()} will
+    also be ignored if a term is specified as continuous in {cmd:lnmor}, but
+    the relevant variable has been included as a factor variable in the
+    original model. {it:spec} may be one of the following.
 
 {p2colset 13 24 27 2}{...}
 {p2col:{opt ave:rage}}report the average derivative across the distribution
-    of the variable
+    of the variable; this is the default
     {p_end}
 {p2col:{opt atm:ean}}report the derivative at the mean of the variable
     {p_end}
@@ -133,20 +138,27 @@
     {p_end}
 {p2col:{help numlist:{it:numlist}}}report derivative at each specified level
     {p_end}
-
-{pmore}
-    {cmd:dx} without argument is equivalent to {cmd:dx(average)}.
+{p2col:{opt lev:els}}report derivative at each observed level; not allowed if
+    {it:termlist} contains multiple terms affected by {cmd:dx()}
+    {p_end}
 
 {phang}
-    {cmd:epsilon}[{cmd:(}{it:#}{cmd:)}] requests that {cmd:dx()} takes derivatives
-    numerically rather than analytically. Numerical derivatives are computed as the
-    difference in population-averaged log odds at t+{it:#} and t-{it:#}, divided by
-    2*{it:#}, where t is the treatment value at which the derivative is
-    evaluated. If {cmd:epsilon} is specified without argument, {it:#} is set
-    to {cmd:exp(log(c(epsdouble))/3)}. With such a setting, results will typically
-    be the same as without the {cmd:epsilon} option. However, you could, for
-    example, specify {cmd:epsilon(0.5)} to obtain unit change effects instead of
-    derivatives.
+    {opt delta}[{cmd:(}{it:#}{cmd:)}] requests that {cmd:dx()} computes
+    discrete change effects rather than derivatives. Discrete change effects
+    are computed as the difference in population-averaged log odds at
+    {it:t}+{it:#} and {it:t}, where {it:t} is the treatment value at which
+    the effect is to be evaluated. {cmd:delta} without argument is equivalent
+    to {cmd:delta(1)} (unit change effect). {cmd:delta()} implies {cmd:dx()}.
+
+{phang}
+    {opt centered} requests that discrete change effects are computed
+    using predictions at {it:t}+{it:#}/2 and {it:t}-{it:#}/2 rather than
+    {it:t}+{it:#} and {it:t}. {cmd:centered} is only relevant if {cmd:delta()}
+    has been specified.
+
+{phang}
+    {opt normalize} divides discrete change effects by {it:#}. {cmd:normalize}
+    is only relevant if {cmd:delta()} has been specified.
 
 {marker at}{...}
 {phang}
@@ -393,7 +405,7 @@
 {synopt:{cmd:r(nterms)}}number of terms{p_end}
 {synopt:{cmd:r(k}{it:#}{cmd:)}}number levels in term {it:#}{p_end}
 {synopt:{cmd:r(dx}{it:#}{cmd:)}}whether {cmd:dx()} has been applied to term {it:#}{p_end}
-{synopt:{cmd:r(epsilon)}}value of {cmd:epsilon()}, if specified{p_end}
+{synopt:{cmd:r(delta)}}value of {cmd:delta()}, if specified{p_end}
 {synopt:{cmd:r(rank)}}rank of {cmd:r(V)}{p_end}
 
 {p2col 5 23 26 2: Macros}{p_end}
@@ -408,6 +420,8 @@
 {synopt:{cmd:r(type}{it:#}{cmd:)}}{cmd:factor}, {cmd:variable}, or {cmd:interaction}; type of term {it:#}{p_end}
 {synopt:{cmd:r(dxtype}{cmd:)}}{cmd:average}, {cmd:atmean}, {cmd:observed}, {cmd:levels}, or empty{p_end}
 {synopt:{cmd:r(dxlevels}{cmd:)}}levels specified in {cmd:dx()}{p_end}
+{synopt:{cmd:r(centered}{cmd:)}}{cmd:centered} or empty{p_end}
+{synopt:{cmd:r(normalize}{cmd:)}}{cmd:normalize} or empty{p_end}
 {synopt:{cmd:r(atnames)}}variable names from {cmd:at()}{p_end}
 {synopt:{cmd:r(wtype)}}weight type{p_end}
 {synopt:{cmd:r(wexp)}}weight expression{p_end}

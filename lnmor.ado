@@ -1,7 +1,7 @@
-*! version 1.0.5  30aug2022  Ben Jann
+*! version 1.0.6  01sep2022  Ben Jann
 
 program lnmor
-    version 14
+    version 15
     if replay() {
         if "`e(cmd)'" != "lnmor" {
             error 301
@@ -124,7 +124,7 @@ program _parse_opts
         if `"`vcetype'"'=="linearized" local svytype "svyr"
         else                           local svytype "svyb"
         _on_colon_parse `e(cmdline)'
-        _parse_svy `s(before)' // returns svy
+        _parse_svy `s(before)'     // returns svy
         _parse_estcmd 0 `s(after)' // returns estcmd
         if "`svytype'"=="svyr" {
             if `"`nose'"'!="" {
@@ -327,6 +327,10 @@ program Display
         }
         di as txt _col(`c1') "Command" _col(`c2') "=" /*
             */ _col(`c3') as res %`w2's e(est_cmd)
+        if `"`e(delta)'"'!="" {
+            di as txt _col(`c1') "Delta" _col(`c2') "=" /*
+                */ _col(`c3') as res %`w2'.0g e(delta)
+        }
         if `"`e(atvars)'"'!="" {
             di ""
             local atvars `"`e(atvars)'"'
@@ -383,18 +387,36 @@ end
 program _lnmor, rclass
     syntax varlist(numeric fv) [, nowarn /*
         */ kmax(numlist int max=1 >1 missingokay) /*
-        */ dx DX2(passthru) EPSilon EPSilon2(numlist max=1 >0) /* 
-        */ at(passthru) atmax(int 50) noDOTs NOSE /*
-        */ IFGENerate(str) replace saveifuninmata ]
-    
-    // defaults
-    if "`kmax'"==""    local kmax 100
-    if "`warn'"!=""    local warn qui
-    if      "`epsilon2'"!="" local eps "`epsilon2'"
-    else if "`epsilon'"!=""  local eps = exp(log(c(epsdouble))/3)
+        */ dx DX2(passthru) delta DELTA2(passthru) CENtered NORMalize /*
+        */ EPSilon /* undocumented
+        */ at(passthru) atmax(int 50) /* 
+        */ noDOTs NOSE IFGENerate(str) replace saveifuninmata ]
+    if "`kmax'"=="" local kmax 100
+    if "`warn'"!="" local warn qui
     
     // parse dx() option
-    _parse_dx, `dx' `dx2' // returns dx, dxtype, dxlevels
+    if "`epsilon'"!="" {
+        local delta     delta
+        local delta2    = 2*exp(log(c(epsdouble))/3)
+        local centered  centered
+        local normalize normalize
+    }
+    else if `"`delta2'"'!="" {
+        local delta delta
+        _parse_delta, `delta2' // returns delta2
+    }
+    if "`delta'"!="" {
+        local dx dx
+        if `"`delta2'"'=="" local delta2 1
+    }
+    else {
+        local centered
+        local normalize
+    }
+    if `"`dx2'"'!="" local dx dx
+    if "`dx'"!="" {
+        _parse_dx, `dx2' // returns dxtype dxlevels
+    }
     
     // collect some info on original model
     local est_N       = e(N)
@@ -404,7 +426,7 @@ program _lnmor, rclass
         local N_clust = e(N_clust)
         local vceopt vce(cluster `clustvar')
     }
-    _collect_model_info // returns mvars, mnames, mfv, mcons, mk
+    _collect_model_info // returns mvars mnames mfv mcons mk
     
     // preserve model and select sample
     tempname ecurrent
@@ -428,7 +450,7 @@ program _lnmor, rclass
     
     // process varlist
     fvexpand `varlist'
-    _collect_fvinfo `r(varlist)' // returns names, nterms, term#, type#, name#, bn#
+    _collect_fvinfo `r(varlist)' // returns names nterms term# type# name# bn#
     local tmp: list dups names
     if `"`tmp'"'!="" {
         di as error "inconsistent varlist; duplicate variables not allowed"
@@ -440,7 +462,7 @@ program _lnmor, rclass
         di as error "{bf:`tmp'} not found in list of covariates"
         exit 111
     }
-    local hasdx 0
+    local ndx 0
     forv j = 1/`nterms' {
         local isinmfv: list name`j' in mfv
         if "`type`j''"=="factor" {
@@ -456,13 +478,20 @@ program _lnmor, rclass
             continue
         }
         if "`type`j''"!="variable" continue
+        if "`dx'"=="" continue
         local dxtype`j' "`dxtype'"
-        local hasdx 1
+        local ++ndx
+    }
+    if `ndx'>1 {
+        if "`dxtype'"=="levels"  & `"`dxlevels'"'=="" {
+            di as err "{bf:dx(levels)} not allowed with multiple continuous terms"
+            exit 198
+        }
     }
     
     // at
     tempname AT
-    _parse_at `AT', `at' atmax(`atmax') mnames(`mnames') // returns AT, K, at
+    _parse_at `AT', `at' atmax(`atmax') mnames(`mnames') // returns AT K at
     local hasat = `"`at'"'!=""
     if `hasat' {
         local tmp: list at & names
@@ -475,7 +504,7 @@ program _lnmor, rclass
     // determine treatment levels
     forv j = 1/`nterms' {
         tempname levels`j'
-        mata: _get_levels("`j'") // fills in levels#, returns k#, cname#
+        mata: _get_levels("`j'") // fills in levels#; returns k# cname#
     }
     
     // prepare VCE
@@ -532,8 +561,8 @@ program _lnmor, rclass
                 rename `cname`j'' `name`j''
             }
             if "`dots'"=="" {
-                if "`dxtype`j''"!="" & "`eps'"!="" local kj = `k`j'' * 2
-                else                               local kj   `k`j''
+                if "`dxtype`j''"!="" & "`delta2'"!="" local kj = `k`j'' * 2
+                else                                  local kj   `k`j''
                 _progress_info "`name`j''[`kj']" `lpos' `lsize'
             }
             local opts /*
@@ -542,7 +571,8 @@ program _lnmor, rclass
                 */ mvars(`mvars') mcons(`mcons') estcmd(`est_cmd') /*
                 */ lsize(`lsize') lpos(`lpos') `dots'
             if "`dxtype`j''"!="" {
-                _lnmor_dx, type(`dxtype`j'') eps(`eps') `opts'
+                _lnmor_dx, type(`dxtype`j'') delta(`delta2') `centered' /*
+                    */ `normalize' `opts'
             }
             else {
                 __lnmor, term(`term`j'') type(`type`j'') bn(`bn`j'') `opts'
@@ -627,10 +657,14 @@ program _lnmor, rclass
         return scalar k`j'      = `k`j''
         return matrix levels`j' = `levels`j''
     }
-    if `hasdx' {
-        return local dxtype       "`dxtype'"
-        return local dxlevels     "`dxlevels'"
-        if "`eps'"!="" return scalar epsilon = `eps'
+    if `ndx' {
+        return local dxtype     "`dxtype'"
+        return local dxlevels   "`dxlevels'"
+        if "`delta2'"!="" {
+            return scalar delta    = `delta2'
+            return local centered  "`centered'"
+            return local normalize "`normalize'"
+        }
     }
     if `hasat' {
         return local atvars     "`at'"
@@ -668,43 +702,45 @@ program _lnmor, rclass
     }
 end
 
-program _parse_dx
-    syntax [, dx dx2(str) ]
-    if `"`dx2'"'!=""   local dx dx
-    else if "`dx'"!="" local dxtype "average"
-    if `"`dx2'"'!="" {
-        if `:list sizeof dx2'==1 {
-            if `"`dx2'"'=="." local dx2 "observed"
-            _parse_dx_type, `dx2'
-        }
-        if "`dxtype'"=="" {
-            capt numlist `"`dx2'"', sort
-            if _rc==1 exit _rc
-            if _rc {
-                di as err "{bf:dx()}: invalid specification"
-                exit 198
-            }
-            local dxtype "levels"
-            local dxlevels "`r(numlist)'"
+program _parse_delta
+    syntax [, delta2(str) ]
+    if `"`delta2'"'!="" {
+        capt confirm number `delta2'
+        if _rc==1 exit _rc
+        if _rc {
+            di as err "delta() invalid -- invalid number"
+            exit 198
         }
     }
-    c_local dx `dx'
+    c_local delta2 `delta2'
+end
+
+program _parse_dx
+    syntax [, dx2(str) ]
+    if `"`dx2'"'=="" local dx2 "average"
+    if `:list sizeof dx2'==1 {
+        if `"`dx2'"'=="." local dx2 "observed"
+        _parse_dx_type, `dx2' // returns dxtype
+    }
+    if "`dxtype'"=="" {
+        capt numlist `"`dx2'"', sort
+        if _rc==1 exit _rc
+        if _rc {
+            di as err "{bf:dx()}: invalid specification"
+            exit 198
+        }
+        local dxtype "levels"
+        local dxlevels "`r(numlist)'"
+    }
     c_local dxtype `dxtype'
     c_local dxlevels: list uniq dxlevels
 end
 
 program _parse_dx_type
-    capt syntax [, ATMean AVErage OBServed ]
+    capt syntax [, ATMean AVErage OBServed LEVels ]
     if _rc==1 exit _rc
-    if _rc==0 {
-        local dx `atmean' `average' `observed'
-        if `:list sizeof dx'>1 {
-            di as err "{bf:dx()}: only one of {bf:atmean}, {bf:average}," /*
-                */ " and {bf:observed} allowed"
-            exit 198
-        }
-    }
-    c_local dxtype `dx'
+    if _rc    exit
+    c_local dxtype `atmean' `average' `observed' `levels'
 end
 
 program _progress_info
@@ -1046,17 +1082,23 @@ end
 
 program _lnmor_dx, rclass
     syntax, type(str) name(str) levels(str) k(str) estcmd(passthru) /*
-         */ mcons(passthru) [ eps(passthru) wvar(passthru) ifs(str) /*
-         */ mifs(passthru) mvars(passthru) lsize(passthru) lpos(str) nodots ]
+        */ mcons(passthru) [ delta(passthru) centered NORMALIZE /*
+        */ wvar(passthru) ifs(str) mifs(passthru) mvars(passthru) /*
+        */ lsize(passthru) lpos(str) nodots ]
     
     // helper vector for deriviatives of the linear predictor
     local vce = `"`ifs'"'!=""
-    if "`eps'"=="" | (`vce' & "`type'"=="atmean") {
+    if "`delta'"=="" | (`vce' & "`type'"=="atmean") {
         tempname dzb
         matrix `dzb' = e(b)
         _ms_dzb_dx `name', matrix(`dzb') // undocumented utility of -margins-
         matrix `dzb' = r(b)
     }
+    
+    // common options
+    local options name(`name') levels(`levels') dzb(`dzb') `wvar' /*
+        */ `delta' `centered' `normalize' `estcmd' `mcons' `mifs' `mvars' /*
+        */ `lsize' `dots'
     
     // average of level-specific dx
     if "`type'"=="average" {
@@ -1069,9 +1111,7 @@ program _lnmor_dx, rclass
         mata: st_numscalar("`W'", quadcolsum(st_matrix("`levels'")[,2]))
         mat `p' = `levels'[1...,2] / `W'
         forv i = 1/`k' {
-            __lnmor_dx, `eps' name(`name') levels(`levels') i(`i') `wvar' /*
-                */ `estcmd' ifvar(`IF') `mcons' `mifs' `mvars' `lsize' /*
-                */ lpos(`lpos') `dots' dzb(`dzb')
+            __lnmor_dx, i(`i') lpos(`lpos') ifvar(`IF') `options'
             mat `b' = `b' + r(b) * `p'[`i',1]
             if `vce' {
                 qui replace `ifs' = `ifs' + (`p'[`i',1] * `IF' ///
@@ -1090,9 +1130,7 @@ program _lnmor_dx, rclass
             qui gen double `muIF' = `name' - `levels'[1,1]
         }
         tempname b
-        __lnmor_dx, `eps' name(`name') levels(`levels') i(1) `wvar' /*
-            */ `estcmd' ifvar(`ifs') `mcons' `mifs' `mvars' `lsize' /*
-            */ lpos(`lpos') `dots' muif(`muIF') dzb(`dzb')
+        __lnmor_dx, i(1) lpos(`lpos') ifvar(`ifs') `options'
         mat `b' = r(b)
         mat coln `b' = `name'(*)
         return matrix b = `b'
@@ -1101,9 +1139,7 @@ program _lnmor_dx, rclass
     // dx at observed values
     if "`type'"=="observed" {
         tempname b
-        __lnmor_dx, `eps' name(`name') levels(`levels') i(1) `wvar' /*
-            */ `estcmd' ifvar(`ifs') `mcons' `mifs' `mvars' `lsize' /*
-            */ lpos(`lpos') `dots' dzb(`dzb')
+        __lnmor_dx, i(1) lpos(`lpos') ifvar(`ifs') `options'
         mat `b' = r(b)
         mat coln `b' = `name'(*)
         return matrix b = `b'
@@ -1116,9 +1152,7 @@ program _lnmor_dx, rclass
     forv i = 1/`k' {
         local coln `coln' `name'(`i')
         gettoken IF ifs : ifs
-        __lnmor_dx, `eps' name(`name') levels(`levels') i(`i') `wvar' /*
-            */ `estcmd' ifvar(`IF') `mcons' `mifs' `mvars' `lsize' /*
-            */ lpos(`lpos') `dots' dzb(`dzb')
+        __lnmor_dx, i(`i') ifvar(`IF') lpos(`lpos') `options'
         mat `b'[1,`i'] = r(b)
     }
     mat coln `b' = `coln'
@@ -1127,7 +1161,7 @@ end
 
 program __lnmor_dx, rclass
     syntax, name(str) levels(str) i(str) estcmd(str) mcons(str) /*
-         */ [ eps(str) wvar(str) ifvar(str) mifs(str) /*
+         */ [ delta(str) centered NORMALIZE wvar(str) ifvar(str) mifs(str) /*
          */ mvars(str) muif(str) dzb(str) lsize(str) lpos(str) nodots ]
     
     // weights
@@ -1142,7 +1176,7 @@ program __lnmor_dx, rclass
     // run
     tempname b l
     scalar `l' = `levels'[`i',1]
-    if "`eps'"=="" {
+    if "`delta'"=="" {
         if "`muif'"!="" {
             tempname ddzb
             _ms_dzb_dx `name', matrix(`dzb')
@@ -1178,6 +1212,16 @@ program __lnmor_dx, rclass
         }
     }
     else {
+        if "`normalize'"=="" local h 1
+        else                 local h `delta'
+        if "`centered'"!="" {
+            local eps1 - `delta'/2
+            local eps2 + `delta'/2
+        }
+        else {
+            local eps1
+            local eps2 + `delta'
+        }
         if "`muif'"!="" tempvar dz
         tempname p1 p2
         tempvar name0 PS
@@ -1186,21 +1230,20 @@ program __lnmor_dx, rclass
         if `l'>=. local lev `name0'
         else      local lev `l'
         forv j = 1/2 {
-            local sign = cond(`j'==1, "-", "+")
-            qui replace `name' = `lev' `sign' `eps'
+            qui replace `name' = `lev' `eps`j''
             qui predict double `PS', pr
             su `PS' `wgt', meanonly
             scalar `p`j'' = r(mean)
             local pbar `p`j''
             if `vce' {
                 if "`muif'"!="" qui matrix score double `dz' = `dzb'
-                mata: __lnmor_dxeps_IF(`eps')
+                mata: __lnmor_dc_IF(`h')
                 if "`muif'"!="" drop `dz'
             }
             drop `PS'
             if "`dots'"=="" _progress_info "." `lpos' `lsize'
         }
-        scalar `b' = (logit(`p2') - logit(`p1')) / (2*`eps')
+        scalar `b' = (logit(`p2') - logit(`p1')) / `h'
         drop `name'
         rename `name0' `name'
     }
@@ -1222,7 +1265,7 @@ program _get_model_IF
         */ st_local("IFs"))
 end
 
-version 11
+version 15
 mata:
 mata set matastrict on
 
@@ -1273,20 +1316,21 @@ void _at_expand(real scalar K0, real scalar J, real scalar atmax)
 
 void _get_levels(string scalar j)
 {
-    string scalar  Name, vtype, dxtype
-    real scalar    k, kmax, dots
-    real colvector X, w, p, a, b
-    real matrix    L
+    string scalar    Name, vtype, dxtype, dxlevels
+    real scalar      k, kmax, dots
+    real colvector   X, w, p, a, b
+    real matrix      L
     
     // setup
-    Name   = st_local("name"+j)
-    dots   = st_local("dots")==""
-    vtype  = st_local("type"+j)
-    dxtype = st_local("dxtype"+j)
-    kmax   = strtoreal(st_local("kmax"))
+    Name     = st_local("name"+j)
+    dots     = st_local("dots")==""
+    vtype    = st_local("type"+j)
+    dxtype   = st_local("dxtype"+j)
+    dxlevels = st_local("dxlevels")
+    kmax     = strtoreal(st_local("kmax"))
     // determine levels
-    if (dxtype=="levels") {
-        L = strtoreal(tokens(st_local("dxlevels"))')
+    if (dxtype=="levels" & dxlevels!="") { // dx(numlist)
+        L = strtoreal(tokens(dxlevels)')
         k = rows(L)
         L = L, J(k, 1, .)
         st_matrix(st_local("levels"+j), L)
@@ -1327,6 +1371,9 @@ void _get_levels(string scalar j)
             b = selectindex(_mm_unique_tag(X, 1))
             if (w==1) L = L, ((b-a):+1)
             else      L = L, mm_diff(0 \ quadrunningsum(w)[b])
+            if (dxtype=="levels") {
+                st_local("dxlevels", invtokens(strofreal(L[,1])'))
+            }
         }
     }
     // returns
@@ -1491,20 +1538,11 @@ real rowvector __lnmor_IF_q_colsum(real colvector dp, real colvector dq,
     real scalar      j, k
     real colvector   dpdq
     real rowvector   sum, dzb, dzbp
-    string rowvector dzbx
     real matrix      dzbX
     
     // prepare info from dzb
     dzb  = editmissing(st_matrix(st_local("dzb")) :/ st_matrix("e(b)"), 0)
-    dzbx = st_matrixcolstripe(st_local("dzb"))[,2]'
-    dzbp = J(1, j = cols(dzb), 0)
-    for (j=cols(dzbx); j; j--) {
-        if (dzbx[j]=="_cons")   continue
-        if (dzbx[j]=="o._cons") continue // is this possible?
-        dzbp[j] = 1
-    }
-    if (any(dzbp)) st_view(dzbX=., ., select(dzbx, dzbp))
-    else           dzbX = J(0,0,.)
+    dzbp = __lnmor_IF_q_dzbX(dzbX=., dzb, st_local("dzb"))
     // compute components
     k = cols(X)
     j = k + cons
@@ -1518,6 +1556,28 @@ real rowvector __lnmor_IF_q_colsum(real colvector dp, real colvector dq,
         else             sum[j] = quadsum(dpdq :* X[,j])
     }
     return(sum)
+}
+
+real rowvector __lnmor_IF_q_dzbX(real matrix X, real rowvector b,
+    string scalar m)
+{
+    real scalar      j
+    string scalar    el
+    string rowvector x
+    real rowvector   p
+    
+    x = st_matrixcolstripe(m)[,2]'
+    p = J(1, j = cols(b), 0)
+    for (;j;j--) {
+        if (!b[j]) continue
+        (void) _msparse(el=x[j], -2, 0) // undocumented Mata function
+        if (el=="_cons") continue
+        x[j] = el
+        p[j] = 1
+    }
+    if (any(p)) st_view(X, ., select(x, p))
+    else        X = J(0,0,.)
+    return(p)
 }
 
 void __lnmor_finalize_IF()
@@ -1550,7 +1610,7 @@ void __lnmor_dx_IF()
         (q*(2*p-1)/(p*(1-p))) * IF[,1]))
 }
 
-void __lnmor_dxeps_IF(real scalar eps)
+void __lnmor_dc_IF(real scalar h)
 {
     real scalar    p, sign
     real colvector IF
@@ -1558,7 +1618,7 @@ void __lnmor_dxeps_IF(real scalar eps)
     sign = st_local("j")=="1" ? -1 : 1
     p    = st_numscalar(st_local("pbar"))
     st_view(IF=., ., st_local("ifvar"))
-    IF[.,.] = IF + __lnmor_IF_p(0) / (sign * 2 * eps * p * (1 - p))
+    IF[.,.] = IF + __lnmor_IF_p(0) / (sign * h * p * (1 - p))
 }
 
 end
