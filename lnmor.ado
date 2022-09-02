@@ -736,7 +736,7 @@ program _lnmor, rclass
             if "`ifscaling'"=="mean" {
                 qui replace `IF'  = `IF' * `sum_w'
             }
-            lab var `IF' "`iftype' of _b[`nm']"
+            lab var `IF' "`iftype' of `nm'"
             rename `IF' `v'
         }
         return local ifgenerate "`ifgenerate'"
