@@ -1,4 +1,4 @@
-*! version 1.0.6  01sep2022  Ben Jann
+*! version 1.0.7  02sep2022  Ben Jann
 
 program lnmor
     version 15
@@ -88,11 +88,12 @@ end
 
 program _parse_opts
     _parse comma lhs 0 : 0
-    syntax [, vce(passthru) post or noHEADer NOSE IFGENerate(passthru) /*
-        */ lnmorspec(str asis) * ]
+    syntax [, vce(passthru) post or noHEADer NOSE /*
+        */ IFGENerate(passthru) RIFgenerate(passthru) lnmorspec(str asis) * ]
     if `"`lnmorspec'"'!="" {
         // lnmor cmd varlist [if] [in], options lnmorspec()
-        local options `vce' `post' `or' `header '`nose' `ifgenerate' `options'
+        local options `vce' `post' `or' `header '`nose' /*
+            */ `ifgenerate' `rifgenerate' `options'
         if `"`options'"'!="" {
             local options , `options'
         }
@@ -114,7 +115,7 @@ program _parse_opts
     c_local post `post'
     // svy
     if `"`e(prefix)'"'=="svy" {
-        local options `ifgenerate' `options'
+        local options `ifgenerate' `rifgenerate' `options'
         _check_source_model `e(cmd)'
         if `"`vce'"'!="" {
             di as err "{bf:vce()} not allowed after {bf:svy}"
@@ -136,7 +137,7 @@ program _parse_opts
                 */ lnmorspec(`lhs', post saveifuninmata `options')
         }
         else {
-            if `"`ifgenerate'"'!="" {
+            if `"`ifgenerate'`rifgenerate'"'!="" {
                 di as err `"{bf:ifgenerate()} not allowed after {bf:svy `vcetype'}"'
                 exit 198
             }
@@ -157,7 +158,7 @@ program _parse_opts
         else {
             _check_source_model `e(cmd)'
         }
-        if `"`ifgenerate'"'!="" {
+        if `"`ifgenerate'`rifgenerate'"'!="" {
             di as err "{bf:ifgenerate()} not allowed after {bf:mi estimate}"
             exit 198
         }
@@ -182,11 +183,11 @@ program _parse_opts
     // bootstrap/jackknife
     _parse_opts_vce, `vce' // returns prefix
     if "`prefix'"=="" {
-        c_local 00 `lhs', `vce' `nose' `ifgenerate' `options'
+        c_local 00 `lhs', `vce' `nose' `ifgenerate' `rifgenerate' `options'
         exit
     }
     _check_source_model `e(cmd)' // returns estcmd
-    if `"`ifgenerate'"'!="" {
+    if `"`ifgenerate'`rifgenerate'"'!="" {
         di as err "{bf:ifgenerate()} not allowed with replication based VCE"
         exit 198
     }
@@ -390,9 +391,27 @@ program _lnmor, rclass
         */ dx DX2(passthru) delta DELTA2(passthru) CENtered NORMalize /*
         */ EPSilon /* undocumented
         */ at(passthru) atmax(int 50) /* 
-        */ noDOTs NOSE IFGENerate(str) replace saveifuninmata ]
+        */ noDOTs NOSE saveifuninmata /*
+        */ IFGENerate(str) RIFgenerate(str) IFScaling(str) replace ]
     if "`kmax'"=="" local kmax 100
     if "`warn'"!="" local warn qui
+    
+    // ifgen
+    if `"`rifgenerate'"'!="" {
+        if `"`ifgenerate'"'!="" {
+            di as err "{bf:ifgenerate()} and {bf:rifgenerate()} not both allowed"
+            exit 198
+        }
+        local ifgenerate `"`rifgenerate'"'
+        local iftype     "RIF"
+    }
+    else if `"`ifgenerate'"'!="" local iftype "IF"
+    capt _parse_ifscaling, `ifscaling'
+    if _rc==1 exit _rc
+    if _rc {
+        di as err "{bf:ifscaling()}: invalid specification"
+        exit 198
+    }
     
     // parse dx() option
     if "`epsilon'"!="" {
@@ -435,6 +454,7 @@ program _lnmor, rclass
     qui keep if e(sample)
     
     // weights
+    tempname sum_w
     local weight `"`e(wtype)'"'
     local exp    `"`e(wexp)'"'
     if "`weight'"!="" {
@@ -446,6 +466,18 @@ program _lnmor, rclass
             qui gen double `wvar' `exp'
         }
         local awgt "[aw=`wvar']"
+        su `wvar', meanonly
+        local N        = r(N)
+        scalar `sum_w' = r(sum)
+    }
+    else {
+        qui count
+        local N        = r(N)
+        scalar `sum_w' = r(N)
+    }
+    if `N'!=`est_N' {
+        di as error "something is wrong; inconsistent estimation sample"
+        exit 498
     }
     
     // process varlist
@@ -567,7 +599,7 @@ program _lnmor, rclass
             }
             local opts /*
                 */ name(`name`j'') levels(`levels`j'') k(`k`j'') /*
-                */ wvar(`wvar') ifs(`IF`j'_`k'') mifs(`mIFs') /*
+                */ wvar(`wvar') sum_w(`sum_w') ifs(`IF`j'_`k'') mifs(`mIFs') /*
                 */ mvars(`mvars') mcons(`mcons') estcmd(`est_cmd') /*
                 */ lsize(`lsize') lpos(`lpos') `dots'
             if "`dxtype`j''"!="" {
@@ -611,10 +643,8 @@ program _lnmor, rclass
             local tot_N = el(e(_N),1,1)
         }
         else local tot_N = e(N)
-        capt assert (`tot_N'==`est_N')
-        if _rc==1 exit _rc
-        if _rc {
-            di as error "something is wrong; inconsistent estimation sample"
+        if `N'!=`tot_N' {
+            di as error "something is wrong; inconsistent VCE sample"
             exit 498
         }
         mata: st_replacematrix(st_local("V"), st_matrix("e(V)"))
@@ -644,7 +674,8 @@ program _lnmor, rclass
     return local  est_cmd     `"`est_cmd'"'
     return local  est_cmdline `"`e(cmdline)'"'
     return local  title       "Marginal (log) odds ratios"
-    return scalar N           = `est_N'
+    return scalar N           = `N'
+    return scalar sum_w       = `sum_w'
     return local  depvar      `"`e(depvar)'"'
     return local  wtype       `"`weight'"'
     return local  wexp        `"`exp'"'
@@ -677,29 +708,49 @@ program _lnmor, rclass
             return scalar df_r    = `N_clust' - 1
         }
         else {
-            return scalar df_r = `est_N' - 1
+            return scalar df_r = `N' - 1
         }
         return local vce     `"`evce'"'
         return local vcetype `"`vcetype'"'
         return scalar rank   = `rank'
     }
     else {
-        return scalar df_r = `est_N' - 1
+        return scalar df_r = `N' - 1
     }
     if "`ifgenerate'"!="" {
-        local coln: coln e(b)
+        tempname b
+        mat `b' = return(b)
+        local coln: coln `b'
+        local j 0
         foreach v of local ifgenerate {
+            local ++j
             gettoken IF IFs : IFs
             if "`IF'"=="" continue, break
             gettoken nm coln : coln
             capt confirm variable `v', exact
             if _rc==1 exit _rc
             if _rc==0 drop `v'
-            lab var `IF' "IF of _b[`nm']"
+            if "`iftype'"=="RIF" {
+                qui replace `IF' = `IF' + `b'[1,`j']/`sum_w'
+            }
+            if "`ifscaling'"=="mean" {
+                qui replace `IF'  = `IF' * `sum_w'
+            }
+            lab var `IF' "`iftype' of _b[`nm']"
             rename `IF' `v'
         }
         return local ifgenerate "`ifgenerate'"
+        return local iftype "`iftype'"
+        return local ifscaling "`ifscaling'"
     }
+end
+
+program _parse_ifscaling
+    syntax [, Mean Total ]
+    local ifscaling `mean' `total'
+    if `: list sizeof ifscaling'>1 exit 198
+    if `"`ifscaling'"'=="" local ifscaling total
+    c_local ifscaling `ifscaling'
 end
 
 program _parse_delta
@@ -984,7 +1035,7 @@ program _parse_ifgenerate
 end
 
 program __lnmor, rclass
-    syntax, term(str) type(str) name(str) bn(str) levels(str) /*
+    syntax, term(str) type(str) name(str) bn(str) levels(str) sum_w(str) /*
          */ k(str) estcmd(str) mcons(str) [ wvar(str) /*
          */ ifs(str) mifs(str) mvars(str) lsize(str) lpos(str) nodots ]
     
@@ -1081,9 +1132,9 @@ program __lnmor, rclass
 end
 
 program _lnmor_dx, rclass
-    syntax, type(str) name(str) levels(str) k(str) estcmd(passthru) /*
-        */ mcons(passthru) [ delta(passthru) centered NORMALIZE /*
-        */ wvar(passthru) ifs(str) mifs(passthru) mvars(passthru) /*
+    syntax, type(str) name(str) levels(str) sum_w(str) k(str) /*
+        */ estcmd(passthru) mcons(passthru) [ delta(passthru) centered /*
+        */ NORMALIZE wvar(passthru) ifs(str) mifs(passthru) mvars(passthru) /*
         */ lsize(passthru) lpos(str) nodots ]
     
     // helper vector for deriviatives of the linear predictor
@@ -1096,9 +1147,9 @@ program _lnmor_dx, rclass
     }
     
     // common options
-    local options name(`name') levels(`levels') dzb(`dzb') `wvar' /*
-        */ `delta' `centered' `normalize' `estcmd' `mcons' `mifs' `mvars' /*
-        */ `lsize' `dots'
+    local options name(`name') levels(`levels') sum_w(`sum_w') dzb(`dzb') /*
+        */  `wvar' `delta' `centered' `normalize' `estcmd' `mcons' `mifs' /*
+        */  `mvars' `lsize' `dots'
     
     // average of level-specific dx
     if "`type'"=="average" {
@@ -1106,16 +1157,15 @@ program _lnmor_dx, rclass
             qui gen double `ifs' = 0
             tempname IF
         }
-        tempname b p W
+        tempname b p
         mat `b' = J(1, 1, 0)
-        mata: st_numscalar("`W'", quadcolsum(st_matrix("`levels'")[,2]))
-        mat `p' = `levels'[1...,2] / `W'
+        mat `p' = `levels'[1...,2] / `sum_w'
         forv i = 1/`k' {
             __lnmor_dx, i(`i') lpos(`lpos') ifvar(`IF') `options'
             mat `b' = `b' + r(b) * `p'[`i',1]
             if `vce' {
                 qui replace `ifs' = `ifs' + (`p'[`i',1] * `IF' ///
-                    + r(b) * ((`name'==`levels'[`i',1]) - `p'[`i',1]) / `W')
+                    + r(b) * ((`name'==`levels'[`i',1]) - `p'[`i',1]) / `sum_w')
                 drop `IF'
             }
         }
@@ -1127,7 +1177,7 @@ program _lnmor_dx, rclass
     if "`type'"=="atmean" {
         if `vce' {
             tempvar muIF // IF of mean
-            qui gen double `muIF' = `name' - `levels'[1,1]
+            qui gen double `muIF' = (`name' - `levels'[1,1]) / `sum_w'
         }
         tempname b
         __lnmor_dx, i(1) lpos(`lpos') ifvar(`ifs') `options'
@@ -1160,7 +1210,7 @@ program _lnmor_dx, rclass
 end
 
 program __lnmor_dx, rclass
-    syntax, name(str) levels(str) i(str) estcmd(str) mcons(str) /*
+    syntax, name(str) levels(str) sum_w(str) i(str) estcmd(str) mcons(str) /*
          */ [ delta(str) centered NORMALIZE wvar(str) ifvar(str) mifs(str) /*
          */ mvars(str) muif(str) dzb(str) lsize(str) lpos(str) nodots ]
     
@@ -1344,7 +1394,7 @@ void _get_levels(string scalar j)
         if (st_local("wvar")!="") w = st_data(., st_local("wvar"))
         else                      w = 1
         if (dxtype=="atmean") {
-            L = (mean(X, w), .)
+            L = (quadsum(w==1 ? X : w:*X)/st_numscalar(st_local("sum_w")), .)
             k = 1
         }
         else {
@@ -1489,12 +1539,11 @@ real rowvector __lnmor_colsum(real colvector w, real matrix X, real scalar cons)
 
 real matrix __lnmor_IF_p(real scalar hasq)
 {
-    real scalar    cons, pbar, W
+    real scalar    cons, pbar
     real colvector p, dp, dz, muIF
     real matrix    IF, X, mIF
     
     cons = strtoreal(st_local("mcons"))
-    W    = st_numscalar("r(sum_w)")
     pbar = st_numscalar(st_local("pbar"))
     p    = st_data(., st_local("PS"))
     if (st_local("estcmd")=="probit") dp = normalden(invnormal(p))
@@ -1506,16 +1555,15 @@ real matrix __lnmor_IF_p(real scalar hasq)
     IF = (p :- pbar) + mIF * __lnmor_colsum(dp, X, cons)'
     if (st_local("muif")!="") {
         // dx(atmean) correction
-        muIF = st_data(., st_local("muif")) // has not been divided by W
-        IF = IF + muIF * (quadcolsum(dp :* dz) / W)
+        muIF = st_data(., st_local("muif"))
+        IF = IF + muIF * quadcolsum(dp :* dz)
     }
-    if (hasq) IF = IF, __lnmor_IF_q(p, dp, X, mIF, cons, dz, muIF, W)
-    return(IF / W)
+    if (hasq) IF = IF, __lnmor_IF_q(p, dp, X, mIF, cons, dz, muIF)
+    return(IF / st_numscalar(st_local("sum_w")))
 }
 
 real matrix __lnmor_IF_q(real colvector p, real colvector dp, real matrix X,
-    real matrix mIF, real scalar cons, real colvector dz, real colvector muIF,
-    real scalar W)
+    real matrix mIF, real scalar cons, real colvector dz, real colvector muIF)
 {
     real scalar    qbar
     real colvector q, dq, IF
@@ -1527,7 +1575,7 @@ real matrix __lnmor_IF_q(real colvector p, real colvector dp, real matrix X,
     IF = (q :- qbar) + mIF * __lnmor_IF_q_colsum(dp, dq, X, cons)'
     if (st_local("muif")!="") {
         IF = IF + muIF * 
-            (quadcolsum(dp :* (dq :* dz :+ st_data(., st_local("ddz")))) / W) 
+            quadcolsum(dp :* (dq :* dz :+ st_data(., st_local("ddz"))))
     }
     return(IF)
 }

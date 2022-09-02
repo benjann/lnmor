@@ -1,5 +1,5 @@
 {smcl}
-{* 01sep2022}{...}
+{* 02sep2022}{...}
 {hi:help lnmor}{...}
 {right:{browse "http://github.com/benjann/lnmor/"}}
 {hline}
@@ -75,8 +75,13 @@
     {p_end}
 {synopt :{opt nose}}do not estimate SEs
     {p_end}
-{synopt :{opt ifgen:erate(spec)}}store influence functions; {it:spec} may be
+{synopt :{opt ifgen:erate(spec)}}store influence functions; {it:spec} is
     {it:namelist} or {it:stub}{cmd:*}
+    {p_end}
+{synopt :{opt rif:gerate(spec)}}store recentered influence functions; {it:spec} is
+    {it:namelist} or {it:stub}{cmd:*}
+    {p_end}
+{synopt :{opt ifs:caling(spec)}}scaling of (recentered) IFs; {it:spec} if {cmd:total} (default) or {cmd:mean}
     {p_end}
 {synopt :{opt replace}}allow replacing existing variables
     {p_end}
@@ -222,11 +227,23 @@
 
 {phang}
     {opt ifgenerate(spec)} stores the influence functions of the estimates. Either
-    specify a list of new variables names,
-    or specify {it:stub}{cmd:*}, in which case the new variables will be named
+    specify a list of new variables names, or specify {it:stub}{cmd:*}, in which
+    case the new variables will be named
     {it:stub}{cmd:1}, {it:stub}{cmd:2}, etc. Option {cmd:ifgenerate()} is not
     allowed with {cmd:vce(bootstrap)} or {cmd:vce(jackknife)}, after {helpb svy}
-    with replication-based VCE, or after {helpb mi estimate}.
+    with replication-based VCE, or after {helpb mi estimate}. {cmd:ifgenerate()}
+    has no effect if {cmd:nose} is specified.
+
+{phang}
+    {opt rifgenerate(spec)} stores the recentered influence functions; see the description
+    of {cmd:ifgenerate()}. Only one of {cmd:ifgenerate()} and {cmd:rifgenerate()}
+    is allowed.
+
+{phang}
+    {opt ifscaling(spec)} determines the scaling of the stored (recentered) influence
+    functions. {it:spec} can be {opt t:otal} (scaling for analysis by
+    {helpb total}) or {opt m:ean} (scaling for analysis by {helpb mean}). Default is 
+    {cmd:ifscaling(total)}.
 
 {phang}
     {opt replace} allows to overwrite existing variables.
@@ -400,6 +417,7 @@
 {p2col 5 23 26 2: Scalars}{p_end}
 {synopt:{cmd:r(N)}}number of observations{p_end}
 {synopt:{cmd:r(N_clust)}}number of clusters{p_end}
+{synopt:{cmd:r(sum_w)}}sum of weights{p_end}
 {synopt:{cmd:r(k_eq)}}number of equations in {cmd:r(b)}{p_end}
 {synopt:{cmd:r(df_r)}}{cmd:r(N)}-1 or {cmd:r(N_clust)}-1{p_end}
 {synopt:{cmd:r(nterms)}}number of terms{p_end}
@@ -429,6 +447,8 @@
 {synopt:{cmd:r(vce)}}{it:vcetype} specified in {cmd:vce()}{p_end}
 {synopt:{cmd:r(vcetype)}}title used to label Std. err.{p_end}
 {synopt:{cmd:r(ifgenerate)}}names of variables containing IFs{p_end}
+{synopt:{cmd:r(iftype)}}{cmd:IF} or {cmd:RIF} (or empty){p_end}
+{synopt:{cmd:r(ifscaling)}}{cmd:total} or {cmd:mean} (or empty){p_end}
 
 {p2col 5 23 26 2: Matrices}{p_end}
 {synopt:{cmd:r(b)}}coefficient vector{p_end}

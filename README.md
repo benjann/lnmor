@@ -22,6 +22,10 @@ to install `moremata`.
 
 Main changes:
 
+    02sep2022 (version 1.0.7)
+    - options -rifgenerate()- and -ifscaling()- added
+    - r(sum_w) added to returns
+    
     01sep2022 (version 1.0.6)
     - lnmor now requires Stata version 15 or newer
     - can now type dx(levels) to report derivative at each observed level
