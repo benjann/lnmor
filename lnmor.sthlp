@@ -57,9 +57,9 @@
 {synopt:{cmdab:at(}{help lnmor##at:{it:spec}}{cmd:)}}estimate results at
     specified values of covariates
     {p_end}
-{synopt :{opt atmax(#)}}maximum number of levels allowed in {cmd:at()}
+{synopt :{opt atmax(#)}}maximum number of patterns allowed in {cmd:at()}
     {p_end}
-{synopt :{opt kmax(#)}}maximum number of levels before coarsening
+{synopt :{opt kmax(#)}}maximum number of treatment levels before coarsening
     kicks in; default is {cmd:kmax(100)}
     {p_end}
 {synopt :{opt nodot:s}}suppress progress dots
@@ -155,6 +155,12 @@
     the effect is to be evaluated. {cmd:delta} without argument is equivalent
     to {cmd:delta(1)} (unit change effect). {cmd:delta()} implies {cmd:dx()}.
 
+{pmore}
+    Discrete change effect are not defined, if {it:#} is 0. In this case, {cmd:lnmor}
+    will compute (log) odds rather than (log) odds ratios. That is, you can 
+    specify {cmd:delta(0)} to obtain levels rather than effects ({cmd:centered}
+    and {cmd:normalize} will be ignored).
+
 {phang}
     {opt centered} requests that discrete change effects are computed
     using predictions at {it:t}+{it:#}/2 and {it:t}-{it:#}/2 rather than
@@ -186,7 +192,7 @@
 
 {phang}
     {opt kmax(#)} sets the maximum number of levels (distinct values) that are
-    allowed for continuous predictors. If a variable has more levels,
+    allowed for continuous treatments. If a variable has more levels,
     {cmd:lnmor} will provide approximate results based on linearly binned
     levels. The default is {cmd:kmax(100)}.
 

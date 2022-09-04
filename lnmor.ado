@@ -1,4 +1,4 @@
-*! version 1.0.7  02sep2022  Ben Jann
+*! version 1.0.8  02sep2022  Ben Jann
 
 program lnmor
     version 15
@@ -305,9 +305,11 @@ program _postrtoe, eclass
 end
 
 program Display
-    syntax [, or noHEADer * ]
-    if "`or'"!="" local eform eform(Odds Ratio)
+    syntax [, or noHEADer eform(passthru) * ]
+    if "`or'"!="" & `"`eform'"'=="" local eform eform(Odds Ratio)
     if "`header'"=="" {
+        if `"`eform'"'!="" local title "Marginal odds ratio"
+        else               local title "Marginal log odds ratio"
         local hflex 1
         if      c(stata_version)<17            local hflex 0
         else if d(`c(born_date)')<d(13jul2021) local hflex 0
@@ -318,7 +320,7 @@ program Display
         local c3 = `c2' + 2
         if `hflex' local headopts head2left(`w1') head2right(`w2')
         else       local headopts
-        _coef_table_header, nomodeltest `headopts'
+        _coef_table_header, nomodeltest title(`title') `headopts'
         if `hflex' {
             // if _coef_table_header used more space than allocated
             local offset1 = max(0, `s(head2_left)' - `w1')
@@ -351,18 +353,25 @@ program Display
     }
     eret di, `eform' `options'  // eform does not seem to work if e(V) is missing
     local dxtype `"`e(dxtype)'"'
-    if      `"`dxtype'"'=="average"  di as txt "(*) average effect"
-    else if `"`dxtype'"'=="atmean"   di as txt "(*) effect at mean"
-    else if `"`dxtype'"'=="observed" {
-        di as txt "(*) effect of marginal shift in observed values"
+    if `"`dxtype'"'=="" exit
+    if `"`e(delta)'"'=="0" {
+        if `"`eform'"'!="" local effect "odds"
+        else               local effect "log odds"
     }
-    else if `"`dxtype'"'=="levels" {
+    else                   local effect "effect"
+    if      `"`dxtype'"'=="average"  di as txt "(*) average `effect'"
+    else if `"`dxtype'"'=="atmean"   di as txt "(*) `effect' at mean"
+    else if `"`dxtype'"'=="observed" {
+        if `"`e(delta)'"'=="0" di as txt "(*) `effect' at observed values"
+        else di as txt "(*) `effect' of marginal shift in observed values"
+    }
+    else {
         local lsize = c(linesize)
         local dxlevels `"`e(dxlevels)'"'
         local j 1
         gettoken l dxlevels : dxlevels
         local l `:di %7.4g `l''
-        local dxnote "(`j') effect at `l'"
+        local dxnote "(`j') `effect' at `l'"
         local l0 = strlen("`dxnote'")
         foreach l of local dxlevels {
             local ++j
@@ -436,6 +445,13 @@ program _lnmor, rclass
     if "`dx'"!="" {
         _parse_dx, `dx2' // returns dxtype dxlevels
     }
+    if "`delta2'"=="0" {
+        local npred 1
+        local centered
+        local normalize
+    }
+    else if "`delta2'"!="" local npred 2
+    else                   local npred 1
     
     // collect some info on original model
     local est_N       = e(N)
@@ -593,8 +609,7 @@ program _lnmor, rclass
                 rename `cname`j'' `name`j''
             }
             if "`dots'"=="" {
-                if "`dxtype`j''"!="" & "`delta2'"!="" local kj = `k`j'' * 2
-                else                                  local kj   `k`j''
+                local kj = `k`j'' * `npred'
                 _progress_info "`name`j''[`kj']" `lpos' `lsize'
             }
             local opts /*
@@ -673,7 +688,7 @@ program _lnmor, rclass
     return local  cmd         "lnmor"
     return local  est_cmd     `"`est_cmd'"'
     return local  est_cmdline `"`e(cmdline)'"'
-    return local  title       "Marginal (log) odds ratios"
+    return local  title       "Marginal (log) odds ratio"
     return scalar N           = `N'
     return scalar sum_w       = `sum_w'
     return local  depvar      `"`e(depvar)'"'
@@ -726,17 +741,17 @@ program _lnmor, rclass
             local ++j
             gettoken IF IFs : IFs
             if "`IF'"=="" continue, break
-            gettoken nm coln : coln
-            capt confirm variable `v', exact
-            if _rc==1 exit _rc
-            if _rc==0 drop `v'
             if "`iftype'"=="RIF" {
                 qui replace `IF' = `IF' + `b'[1,`j']/`sum_w'
             }
             if "`ifscaling'"=="mean" {
                 qui replace `IF'  = `IF' * `sum_w'
             }
+            gettoken nm coln : coln
             lab var `IF' "`iftype' of `nm'"
+            capt confirm variable `v', exact
+            if _rc==1 exit _rc
+            if _rc==0 drop `v'
             rename `IF' `v'
         }
         return local ifgenerate "`ifgenerate'"
@@ -1262,9 +1277,16 @@ program __lnmor_dx, rclass
         }
     }
     else {
-        if "`normalize'"=="" local h 1
-        else                 local h `delta'
-        if "`centered'"!="" {
+        if "`delta'"=="0"      local np 1
+        else                   local np 2
+        if "`normalize'"==""   local h 1
+        else if `np'==1        local h 1
+        else                   local h `delta'
+        if `np'==1 {
+            local eps1
+            local eps2
+        }
+        else if "`centered'"!="" {
             local eps1 - `delta'/2
             local eps2 + `delta'/2
         }
@@ -1279,7 +1301,7 @@ program __lnmor_dx, rclass
         qui gen double `name' = .
         if `l'>=. local lev `name0'
         else      local lev `l'
-        forv j = 1/2 {
+        forv j = 1/`np' {
             qui replace `name' = `lev' `eps`j''
             qui predict double `PS', pr
             su `PS' `wgt', meanonly
@@ -1293,7 +1315,8 @@ program __lnmor_dx, rclass
             drop `PS'
             if "`dots'"=="" _progress_info "." `lpos' `lsize'
         }
-        scalar `b' = (logit(`p2') - logit(`p1')) / `h'
+        if `np'==1 scalar `b' = logit(`p1')
+        else       scalar `b' = (logit(`p2') - logit(`p1')) / `h'
         drop `name'
         rename `name0' `name'
     }
@@ -1663,7 +1686,7 @@ void __lnmor_dc_IF(real scalar h)
     real scalar    p, sign
     real colvector IF
     
-    sign = st_local("j")=="1" ? -1 : 1
+    sign = st_local("j")!=st_local("np") ? -1 : 1
     p    = st_numscalar(st_local("pbar"))
     st_view(IF=., ., st_local("ifvar"))
     IF[.,.] = IF + __lnmor_IF_p(0) / (sign * h * p * (1 - p))

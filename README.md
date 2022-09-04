@@ -22,6 +22,11 @@ to install `moremata`.
 
 Main changes:
 
+    02sep2022 (version 1.0.8)
+    - delta(0) now computes log odds rather than log odds ratios
+    - minor changes to output
+    - minor changes to help
+
     02sep2022 (version 1.0.7)
     - options -rifgenerate()- and -ifscaling()- added
     - r(sum_w) added to returns
