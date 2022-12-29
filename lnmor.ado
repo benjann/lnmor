@@ -1,4 +1,4 @@
-*! version 1.0.8  02sep2022  Ben Jann
+*! version 1.0.9  29dec2022  Ben Jann
 
 program lnmor
     version 15
@@ -60,19 +60,21 @@ program lnmor
         exit
     }
     if !c(noisily) exit
-    tempname ecurrent rcurrent
+    tempname ecurrent rcurrent rtable
     _estimates hold `ecurrent', restore
     _postrtoe
     nobreak {
         _return hold `rcurrent'
         capture noisily break {
             Display, `header' `diopts'
+            matrix `rtable' = r(table)
             if `"`e(ifgenerate)'"'!="" {
                 describe `e(ifgenerate)'
             }
         }
         local rc = _rc
         _return restore `rcurrent'
+        Post_rtable `rtable'
         if `rc' exit `rc'
     }
 end
@@ -330,16 +332,24 @@ program Display
         }
         di as txt _col(`c1') "Command" _col(`c2') "=" /*
             */ _col(`c3') as res %`w2's e(est_cmd)
+        if `"`e(dxtype)'"'!="" {
+            di as txt _col(`c1') "Type of dx()" _col(`c2') "=" /*
+                */ _col(`c3') as res %`w2's e(dxtype)
+        }
         if `"`e(delta)'"'!="" {
-            di as txt _col(`c1') "Delta" _col(`c2') "=" /*
+            di as txt _col(`c1') "Value of delta()" _col(`c2') "=" /*
                 */ _col(`c3') as res %`w2'.0g e(delta)
+            di as txt _col(`c1') "Centered" _col(`c2') "=" _col(`c3') /*
+                */ as res %`w2's cond(`"`e(centered)'"'!="","yes","no")
+            di as txt _col(`c1') "Normalized" _col(`c2') "=" _col(`c3') /*
+                */ as res %`w2's cond(`"`e(normalize)'"'!="","yes","no")
         }
         if `"`e(atvars)'"'!="" {
-            di ""
+            di as txt "Evaluated at:"
             local atvars `"`e(atvars)'"'
             local K = e(k_eq)
             forv i = 1/`K' {
-                di as res "`i'" as txt ": " _c
+                di as res %5s "`i'" as txt ": " _c
                 local j 0
                 foreach v of local atvars {
                     if `j' di as txt ", " _c
@@ -354,48 +364,23 @@ program Display
     eret di, `eform' `options'  // eform does not seem to work if e(V) is missing
     local dxtype `"`e(dxtype)'"'
     if `"`dxtype'"'=="" exit
-    if `"`e(delta)'"'=="0" {
-        if `"`eform'"'!="" local effect "odds"
-        else               local effect "log odds"
+    di as txt "Terms affected by dx():" _c
+    forv i = 1/`e(nterms)' {
+        if e(dx`i')==1 di as res " `e(term`i')'" _c
     }
-    else                   local effect "effect"
-    if      `"`dxtype'"'=="average"  di as txt "(*) average `effect'"
-    else if `"`dxtype'"'=="atmean"   di as txt "(*) `effect' at mean"
-    else if `"`dxtype'"'=="observed" {
-        if `"`e(delta)'"'=="0" di as txt "(*) `effect' at observed values"
-        else di as txt "(*) `effect' of marginal shift in observed values"
-    }
-    else {
-        local lsize = c(linesize)
-        local dxlevels `"`e(dxlevels)'"'
-        local j 1
-        gettoken l dxlevels : dxlevels
-        local l `:di %7.4g `l''
-        local dxnote "(`j') `effect' at `l'"
-        local l0 = strlen("`dxnote'")
-        foreach l of local dxlevels {
-            local ++j
-            local l `:di %7.4g `l''
-            local l ", (`j') at `l'"
-            local l1 = strlen("`l'")
-            if ((`l0'+`l1')>(`lsize'-4)) {
-                if ((`l0'+`l1')<=`lsize') {
-                    local dxnote "`dxnote'`l'"
-                }
-                else {
-                    local dxnote "`dxnote' ..."
-                }
-                continue, break
-            }
-            local dxnote "`dxnote'`l'"
-            local l0 = `l0' + `l1'
-        }
-        di as txt "`dxnote'"
+    di ""
+    if `"`dxtype'"'=="levels" {
+        di as txt "Levels of dx(): " as res `"`e(dxlevels)'"'
     }
 end
 
+program Post_rtable, rclass
+    return add
+    return matrix table = `0'
+end
+
 program _lnmor, rclass
-    syntax varlist(numeric fv) [, nowarn /*
+    syntax varlist(numeric fv) [, nowarn CONStant /*
         */ kmax(numlist int max=1 >1 missingokay) /*
         */ dx DX2(passthru) delta DELTA2(passthru) CENtered NORMalize /*
         */ EPSilon /* undocumented
@@ -537,6 +522,18 @@ program _lnmor, rclass
         }
     }
     
+    // constant
+    if "`constant'"!="" {
+        if `nterms'>1 {
+            di as err "{bf:constant} not allowed with multiple terms"
+            exit 198
+        }
+        if "`dxtype1'"!="" {
+            di as err "{bf:constant} cannot be combined with {bf:dx()}"
+            exit 198
+        }
+    }
+    
     // at
     tempname AT
     _parse_at `AT', `at' atmax(`atmax') mnames(`mnames') // returns AT K at
@@ -569,7 +566,9 @@ program _lnmor, rclass
                     tempvar IF`j'_`k'
                 }
                 else {
-                    mata: _mktmpnames("IF`j'_`k'", `: list sizeof term`j'')
+                    local tmp: list sizeof term`j'
+                    if "`constant'"!="" & !`bn`j'' local ++tmp
+                    mata: _mktmpnames("IF`j'_`k'", `tmp')
                 }
                 local IFs `IFs' `IF`j'_`k''
             }
@@ -578,7 +577,7 @@ program _lnmor, rclass
         if `"`ifgenerate'"'!="" {
             _parse_ifgenerate `"`ifgenerate'"' `:list sizeof IFs' `replace'
         }
-        // optain model IFs
+        // obtain model IFs
         mata: _mktmpnames("mIFs", `mk')
         _get_model_IF `mcons' "`mvars'" "`mIFs'"
     }
@@ -586,9 +585,9 @@ program _lnmor, rclass
     
     // compute marginal ORs
     if "`dots'"=="" {
-        di as txt _n "Enumerating predictions:" _n "  " _c
-        local lsize = c(linesize)
-        local lpos 3
+        di as txt _n "Enumerating predictions: " _c
+        local lsize = min(78,c(linesize))
+        local lpos 26
     }
     if `hasat' tempname B
     local k 0
@@ -622,7 +621,8 @@ program _lnmor, rclass
                     */ `normalize' `opts'
             }
             else {
-                __lnmor, term(`term`j'') type(`type`j'') bn(`bn`j'') `opts'
+                __lnmor, term(`term`j'') type(`type`j'') bn(`bn`j'') /*
+                    */ `constant' `opts'
             }
             matrix `b' = nullmat(`b'), r(b)
             if "`cname`j''"!="`name`j''" {
@@ -681,6 +681,12 @@ program _lnmor, rclass
     }
     
     // returns
+    if `ndx' {
+        if "`dxtype'"=="levels" {
+            tempname levels
+            matrix `levels' = `b' * .
+        }
+    }
     return matrix b           = `b'
     return matrix V           = `V'
     return scalar k_eq        = `K'
@@ -695,14 +701,6 @@ program _lnmor, rclass
     return local  wtype       `"`weight'"'
     return local  wexp        `"`exp'"'
     return scalar nterms      = `nterms'
-    forv j = 1/`nterms' {
-        return local  name`j'   "`name`j''"
-        return local  term`j'   "`term`j''"
-        return local  type`j'   "`type`j''"
-        return scalar dx`j'     = "`dxtype`j''"!=""
-        return scalar k`j'      = `k`j''
-        return matrix levels`j' = `levels`j''
-    }
     if `ndx' {
         return local dxtype     "`dxtype'"
         return local dxlevels   "`dxlevels'"
@@ -711,6 +709,29 @@ program _lnmor, rclass
             return local centered  "`centered'"
             return local normalize "`normalize'"
         }
+        if "`dxtype'"=="levels" {
+            local i1 1
+            forv k = 1 / `K' {
+                forv j = 1/`nterms' {
+                    if "`dxtype`j''"!="" {
+                        matrix `levels'[1,`i1'] = `levels`j''[1...,1]'
+                        local i1 = `i1' + rowsof(`levels`j'')
+                    }
+                    else {
+                        local i1 = `i1' + `:list sizeof term`j''
+                    }
+                }
+            }
+            return matrix levels = `levels'
+        }
+    }
+    forv j = 1/`nterms' {
+        return local  name`j'   "`name`j''"
+        return local  term`j'   "`term`j''"
+        return local  type`j'   "`type`j''"
+        return scalar k`j'      = `k`j''
+        return matrix levels`j' = `levels`j''
+        return scalar dx`j'     = "`dxtype`j''"!=""
     }
     if `hasat' {
         return local atvars     "`at'"
@@ -815,8 +836,8 @@ program _progress_info
     if (`lpos'+`l'-1)>`lsize' {
         local l0 = `lsize' - `lpos' + 1
         local s0 = substr("`s'", 1, `l0')
-        di as txt "`s0'" _n "  " _c
-        local lpos 3
+        di as txt "`s0'"
+        local lpos 1
         local s = substr("`s'", `l0'+1, .)
         local l = `l' - `l0'
         
@@ -1051,19 +1072,19 @@ end
 
 program __lnmor, rclass
     syntax, term(str) type(str) name(str) bn(str) levels(str) sum_w(str) /*
-         */ k(str) estcmd(str) mcons(str) [ wvar(str) /*
+         */ k(str) estcmd(str) mcons(str) [ constant wvar(str) /*
          */ ifs(str) mifs(str) mvars(str) lsize(str) lpos(str) nodots ]
     
     // weights
     if "`wvar'"!="" local wgt "[aw=`wvar']"
     
-    // whether outcome model has constant (bv=1 only possible if type=factor)
+    // whether outcome model has constant (bn=1 only possible if type=factor)
     if `bn' local nocons noconstant
     
     // create tempvars for IFs
     local vce = `"`ifs'"'!=""
     if `vce' {
-        if "`nocons'"=="" {
+        if "`nocons'`constant'"=="" {
             tempname IFcns
             local ifs `ifs' `IFcns'
         }
@@ -1071,7 +1092,7 @@ program __lnmor, rclass
             qui gen double `v' = 0
         }
     }
-    
+
     // run
     tempname l pbar
     tempvar name0 name1 name2 p w PS
@@ -1134,14 +1155,18 @@ program __lnmor, rclass
     tempname b
     if `hasvar' {
         matrix `b' = e(b)
-        if "`nocons'"=="" {
+        if "`nocons'`constant'"=="" {
             matrix `b' = `b'[1,1..colsof(`b')-1]
         }
         mat coleq `b' = ""
     }
     else {
-        mat `b' = J(1,`: list sizeof term', 0)
-        mat coln `b' = `term'
+        local tmp: list sizeof term
+        if "`constant'"!="" & !`bn' local ++tmp
+        mat `b' = J(1,`tmp', 0)
+        local tmp `term'
+        if "`constant'"!="" & !`bn' local tmp `tmp' _cons
+        mat coln `b' = `tmp'
     }
     return matrix b = `b'
 end
@@ -1184,7 +1209,7 @@ program _lnmor_dx, rclass
                 drop `IF'
             }
         }
-        mat coln `b' = `name'(*)
+        mat coln `b' = `name'
         return matrix b = `b'
         exit
     }
@@ -1197,7 +1222,7 @@ program _lnmor_dx, rclass
         tempname b
         __lnmor_dx, i(1) lpos(`lpos') ifvar(`ifs') `options'
         mat `b' = r(b)
-        mat coln `b' = `name'(*)
+        mat coln `b' = `name'
         return matrix b = `b'
         exit
     }
@@ -1206,7 +1231,7 @@ program _lnmor_dx, rclass
         tempname b
         __lnmor_dx, i(1) lpos(`lpos') ifvar(`ifs') `options'
         mat `b' = r(b)
-        mat coln `b' = `name'(*)
+        mat coln `b' = `name'
         return matrix b = `b'
         exit
     }
@@ -1215,7 +1240,7 @@ program _lnmor_dx, rclass
     mat `b' = J(1, `k', .)
     local coln
     forv i = 1/`k' {
-        local coln `coln' `name'(`i')
+        local coln `coln' `name'@l`i'
         gettoken IF ifs : ifs
         __lnmor_dx, i(`i') ifvar(`IF') lpos(`lpos') `options'
         mat `b'[1,`i'] = r(b)

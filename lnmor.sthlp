@@ -1,5 +1,5 @@
 {smcl}
-{* 02sep2022}{...}
+{* 29dec2022}{...}
 {hi:help lnmor}{...}
 {right:{browse "http://github.com/benjann/lnmor/"}}
 {hline}
@@ -8,7 +8,17 @@
 
 {pstd}{hi:lnmor} {hline 2} Compute marginal (log) odds ratios after model estimation
 
+{pstd}
+    {help lnmor##syntax:Syntax} -
+    {help lnmor##description:Description} -
+    {help lnmor##options:Options} -
+    {help lnmor##examples:Examples} -
+    {help lnmor##returns:Stored results} -
+    {help lnmor##author:Author} -
+    {help lnmor##alsosee:Also see}
 
+
+{marker syntax}{...}
 {title:Syntax}
 
 {p 8 15 2}
@@ -66,6 +76,8 @@
     {p_end}
 {synopt :{opt nowarn}}suppress variable type warning messages
     {p_end}
+{synopt:{opt cons:tant}}include constant from {helpb fracreg} in results; only allowed in some situations
+    {p_end}
 {synopt :{opt post}}post results in {cmd:e()}
     {p_end}
 
@@ -100,19 +112,25 @@
 {synoptline}
 
 
+{marker description}{...}
 {title:Description}
 
 {pstd}
-    {cmd:lnmor} computes (adjusted) marginal odds ratios
-    after {helpb logit} or {helpb probit} using G-computation. {cmd:lnmor}
-    works by applying fractional logit ({helpb fracreg})
-    to averaged counterfactual predictions from the original model.
+    {cmd:lnmor} computes (adjusted) marginal odds ratios after {helpb logit} or
+    {helpb probit} (possibly including the {helpb svy} or {helpb mi estimate}
+    prefix) using G-computation. By default, {cmd:lnmor}
+    works by applying fractional logit ({helpb fracreg}) to averaged
+    counterfactual predictions from the original model. Alternatively, for
+    continuous predictors, specify option {helpb lnmor##dx:dx()} to compute
+    derivative-based results. For methods and formulas see 
+    {help lnmor##author:Jann and Karlson (2022)}.
 
 {pstd}
     {cmd:lnmor} requires {helpb moremata} to be installed on the system. Type
     {stata ssc install moremata}.
 
 
+{marker options}{...}
 {title:Options}
 
 {marker dx}{...}
@@ -205,6 +223,14 @@
     relevant variables in the original model.
 
 {phang}
+    {opt constant} includes the constant of the fractional logit in the
+    results vector. The default is to remove the constant. Including
+    the constant may be helpful, for example, if you want to generate
+    predictions from results of nonlinear terms. {cmd:constant} cannot be
+    combined with {cmd:dx()} and is not allowed if {it:termlist} contains
+    multiple terms.
+
+{phang}
     {opt post} stores results in {cmd:e()} rather than in {cmd:r()}. {cmd:post}
     has no effect if {cmd:vce(bootstrap)} or {cmd:vce(jackknife)} is specified,
     or if {cmd:lnmor} is applied after {helpb svy}; results will always be stored
@@ -279,8 +305,16 @@
     than displaying the statistics for the coefficients.
 
 
-{title:Example}
+{marker examples}{...}
+{title:Examples}
 
+    {help lnmor##exbasic:Basic usage}
+    {help lnmor##exnl:Nonlinear effects}
+    {help lnmor##exbs:Bootstrap standard errors}
+    {help lnmor##exsvy:Survey estimation}
+    {help lnmor##exmi:Multiple imputation}
+
+{marker exbasic}{...}
 {dlgtab:Basic usage}
 
 {pstd}
@@ -305,7 +339,7 @@
         . {stata lnmor i.smoke i.race age lwt, or}
 
 {pstd}
-    Use option {cmd:at()} to explore interactions:
+    Use option {helpb lnmor##at:at()} to explore interactions:
 
 {p 8 12 2}. {stata logit low i.smoke i.race age lwt ptl ht ui i.smoke#i.race, or}{p_end}
 {p 8 12 2}. {stata lnmor i.smoke, at(race) or}{p_end}
@@ -317,7 +351,7 @@
 {p 8 12 2}. {stata lnmor ibn.smoke, at(race) or}{p_end}
 
 {pstd}
-    For categorical predictors, a combination of {helpb margins} and {helpb nlcom}
+    Note that, for categorical predictors, a combination of {helpb margins} and {helpb nlcom}
     can be used to replicate the results by {cmd:lnmor}:
 
 {p 8 12 2}. {stata logit low i.smoke i.race age lwt ptl ht ui, vce(robust)}{p_end}
@@ -326,16 +360,16 @@
 {p 8 12 2}. {stata "nlcom (smoke:(logit(_b[2._at]) - logit(_b[1._at]))), post"}{p_end}
 {p 8 12 2}. {stata ereturn display, eform(Odds Ratio)}{p_end}
 
+{marker exnl}{...}
 {dlgtab:Nonlinear effects}
 
 {pstd}
-    Nonlinear effects can, for example, be explored using the {cmd:dx()}
+    Nonlinear effects can, for example, be explored using the {helpb lnmor##dx:dx()}
     option. Example:
 
 {p 8 12 2}. {stata sysuse nlsw88}{p_end}
 {p 8 12 2}. {stata logit union i.south grade c.grade#c.grade c.grade#c.grade#c.grade age}{p_end}
-{p 8 12 2}. {stata levelsof grade}{p_end}
-{p 8 12 2}. {stata lnmor grade, dx(`r(levels)') post}{p_end}
+{p 8 12 2}. {stata lnmor grade, dx(levels) post}{p_end}
 
 {pstd}
     The output reports the marginal (log) odds ratio at different levels of
@@ -367,6 +401,7 @@
     As is evident, the effect function from the second approach matches the
     point estimates from the first approach very well.
 
+{marker exbs}{...}
 {dlgtab:Bootstrap standard errors}
 
 {pstd}
@@ -386,6 +421,7 @@
     To {cmd:lnmor} reestimates the original model within the single
     replications.
 
+{marker exsvy}{...}
 {dlgtab:Survey estimation}
 
 {pstd}
@@ -403,6 +439,7 @@
         . {stata "svy: logit highbp i.female i.race height weight age, or"}
         . {stata lnmor i.female i.race, or}
 
+{marker exmi}{...}
 {dlgtab:Multiple imputation}
 
 {pstd}
@@ -414,6 +451,7 @@
         . {stata lnmor i.smokes, or}
 
 
+{marker returns}{...}
 {title:Stored results}
 
 {pstd}
@@ -427,7 +465,7 @@
 {synopt:{cmd:r(k_eq)}}number of equations in {cmd:r(b)}{p_end}
 {synopt:{cmd:r(df_r)}}{cmd:r(N)}-1 or {cmd:r(N_clust)}-1{p_end}
 {synopt:{cmd:r(nterms)}}number of terms{p_end}
-{synopt:{cmd:r(k}{it:#}{cmd:)}}number levels in term {it:#}{p_end}
+{synopt:{cmd:r(k}{it:#}{cmd:)}}number evaluation levels used for term {it:#}{p_end}
 {synopt:{cmd:r(dx}{it:#}{cmd:)}}whether {cmd:dx()} has been applied to term {it:#}{p_end}
 {synopt:{cmd:r(delta)}}value of {cmd:delta()}, if specified{p_end}
 {synopt:{cmd:r(rank)}}rank of {cmd:r(V)}{p_end}
@@ -460,41 +498,40 @@
 {synopt:{cmd:r(b)}}coefficient vector{p_end}
 {synopt:{cmd:r(V)}}variance-covariance matrix of the estimators{p_end}
 {synopt:{cmd:r(at)}}matrix of values from {cmd:at()}{p_end}
-{synopt:{cmd:r(levels}{it:#}{cmd:)}}values and counts of levels of term {it:#}{p_end}
+{synopt:{cmd:r(levels}{it:#}{cmd:)}}values and counts of evaluation levels used for term {it:#}{p_end}
+{synopt:{cmd:r(levels)}}vector matching {cmd:r(b)} containing levels from {cmd:dx(levels)} or {opt dx(numlist)}{p_end}
+{synopt:{cmd:r(table)}}information from the coefficient table{p_end}
 
 {pstd}
 If {cmd:post} is specified, results are stored in {cmd:e()} rather than
 {cmd:r()}, and function {cmd:e(sample)} that marks the estimation sample is
-added.
+added. An exception is {cmd:r(table)}, which will remain in {cmd:r()}; see 
+help {helpb _coef_table} or {helpb ereturn} for details in {cmd:r(table)}.
 
 
-{title:Methods and Formulas}
-
-{pstd}
-    See Jann and Karlson (2022).
-
-
-{title:References}
-
-{phang}
-    Jann, Ben, and Kristian Bernt Karlson. 2022. Marginal odds ratios: What they
-    are, how to compute them, and why sociologists might want to use them. Working paper.
-    {p_end}
-
-
+{marker author}{...}
 {title:Author}
 
 {pstd}
     Ben Jann, University of Bern, ben.jann@unibe.ch
 
 {pstd}
-    Thanks for citing this software as follows:
+    Thanks for citing this software as
 
-{pmore}
-    Jann, B. (2022). lnmor: Stata module to compute marginal odds
+{phang2}
+    Jann, B., K.B. Karlson. 2022. Estimation of marginal odds ratios. University
+    of Bern Social Sciences Working Papers 44. Available from
+    {browse "https://ideas.repec.org/p/bss/wpaper/44.html"}.
+    {p_end}
+{pstd}
+    or
+    {p_end}
+{phang2}
+    Jann, B. 2022. lnmor: Stata module to compute marginal odds
     ratios after model estimation. Available from {browse "http://github.com/benjann/lnmor/"}.
 
 
+{marker alsosee}{...}
 {title:Also see}
 
 {psee}

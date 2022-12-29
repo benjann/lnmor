@@ -9,7 +9,8 @@ counterfactual predictions from the original model.
 
 Installation from GitHub:
 
-    . net install lnmor, replace from(https://raw.githubusercontent.com/benjann/lnmor/main/)
+    . net from https://raw.githubusercontent.com/benjann/lnmor/main/
+    . net install lnmor, replace
 
 The [`moremata`](https://github.com/benjann/moremata) package is required.
 Type
@@ -21,6 +22,14 @@ to install `moremata`.
 ---
 
 Main changes:
+
+    29dec2022 (version 1.0.9)
+    - option -constant- added
+    - matrix r(levels) now returned if dx(numlist) or dx(levels) is specified
+    - r(table) was only returned if option -post- was specified; this is fixed
+    - revised labeling of terms affected by dx(); revised info on dx() and delta()
+      displayed in output
+    - revised display of progress dots
 
     02sep2022 (version 1.0.8)
     - delta(0) now computes log odds rather than log odds ratios
