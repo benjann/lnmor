@@ -1,4 +1,4 @@
-*! version 1.0.9  29dec2022  Ben Jann
+*! version 1.1.0  29dec2022  Ben Jann
 
 program lnmor
     version 15
@@ -1211,6 +1211,7 @@ program _lnmor_dx, rclass
         }
         mat coln `b' = `name'
         return matrix b = `b'
+        c_local lpos `lpos'
         exit
     }
     // dx at mean
@@ -1224,6 +1225,7 @@ program _lnmor_dx, rclass
         mat `b' = r(b)
         mat coln `b' = `name'
         return matrix b = `b'
+        c_local lpos `lpos'
         exit
     }
     // dx at observed values
@@ -1233,6 +1235,7 @@ program _lnmor_dx, rclass
         mat `b' = r(b)
         mat coln `b' = `name'
         return matrix b = `b'
+        c_local lpos `lpos'
         exit
     }
     // dx at levels
@@ -1247,6 +1250,7 @@ program _lnmor_dx, rclass
     }
     mat coln `b' = `coln'
     return matrix b = `b'
+    c_local lpos `lpos'
 end
 
 program __lnmor_dx, rclass
