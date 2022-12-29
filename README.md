@@ -23,6 +23,9 @@ to install `moremata`.
 
 Main changes:
 
+    29dec2022 (version 1.1.0)
+    - fixed bug in display of progress dots in case of dx()
+    
     29dec2022 (version 1.0.9)
     - option -constant- added
     - matrix r(levels) now returned if dx(numlist) or dx(levels) is specified
