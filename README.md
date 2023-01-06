@@ -23,9 +23,13 @@ to install `moremata`.
 
 Main changes:
 
+    06jan2023 (version 1.1.1)
+    - option -notable- added
+    - revised implementation of support for svy
+
     29dec2022 (version 1.1.0)
     - fixed bug in display of progress dots in case of dx()
-    
+
     29dec2022 (version 1.0.9)
     - option -constant- added
     - matrix r(levels) now returned if dx(numlist) or dx(levels) is specified
