@@ -1,4 +1,4 @@
-*! version 1.1.0  29dec2022  Ben Jann
+*! version 1.1.1  06jan2023  Ben Jann
 
 program lnmor
     version 15
@@ -6,45 +6,45 @@ program lnmor
         if "`e(cmd)'" != "lnmor" {
             error 301
         }
-        Display `0'
+        Replay `0'
         exit
     }
     local version : di "version " string(_caller()) ":"
-    _parse_opts `0' // returns diopts, header, post, 00, estcmd, prefix
-    if "`prefix'"=="svyr" {
-        nobreak {
-            capt noisily break {
-                `version' `00'
-            }
-            if _rc {
-                local rc = _rc
-                capt mata mata drop _LNMOR_TMP_IFs
-                exit `rc'
-            }
-        }
-        _ereturn_svyr
-        _ereturn_cmdline `0'
-        Display, `header' `diopts'
-        if `"`e(ifgenerate)'"'!="" {
-            describe `e(ifgenerate)'
-        }
-        exit
-    }
-    if "`prefix'"=="svyb" {
-        `version' `00'
-        _ereturn_svy
-        _ereturn_cmdline `0'
-        Display, `header' `diopts'
-        exit
-    }
-    if "`prefix'"=="mi" {
-        `version' `00'
-        _ereturn_cmdline `0'
-        exit
-    }
+    _parse_opts `0' // returns diopts, post, 00, estcmd, prefix
     if "`prefix'"!="" {
-        `version' _vce_parserun lnmor, noeqlist mark(CLuster): `00'
+        local est_cmdline `"`e(cmdline)'"'
+        tempname ecurrent
+        _estimates hold `ecurrent', restore
+        if "`prefix'"=="svyr" {
+            nobreak {
+                capt noisily break {
+                    `version' `00'
+                }
+                if _rc {
+                    local rc = _rc
+                    capt mata mata drop _LNMOR_TMP_IFs
+                    exit `rc'
+                }
+            }
+            _ereturn_svy
+            Replay, `diopts'
+            Describe_newvars `e(ifgenerate)'
+        }
+        else if "`prefix'"=="svyb" {
+            local est_cmdline `"`e(cmdline)'"'
+            `version' `00'
+            _ereturn_svy
+            Replay, `diopts'
+        }
+        else if "`prefix'"=="mi" {
+            `version' `00'
+        }
+        else { // bootstrap/jackknife
+            `version' _vce_parserun lnmor, noeqlist mark(CLuster): `00'
+        }
         _ereturn_cmdline `0'
+        _ereturn_est_cmdline `est_cmdline'
+        _estimates unhold `ecurrent', not
         exit
     }
     `estcmd' // rerun estimation command in case of replication VCE
@@ -53,34 +53,20 @@ program lnmor
     _return_cmdline `0'
     if "`post'"!="" {
         _postrtoe, all
-        Display, `header' `diopts'
-        if `"`e(ifgenerate)'"'!="" {
-            describe `e(ifgenerate)'
-        }
+        Replay, `diopts'
+        Describe_newvars `e(ifgenerate)'
         exit
     }
-    if !c(noisily) exit
-    tempname ecurrent rcurrent rtable
-    _estimates hold `ecurrent', restore
-    _postrtoe
-    nobreak {
-        _return hold `rcurrent'
-        capture noisily break {
-            Display, `header' `diopts'
-            matrix `rtable' = r(table)
-            if `"`e(ifgenerate)'"'!="" {
-                describe `e(ifgenerate)'
-            }
-        }
-        local rc = _rc
-        _return restore `rcurrent'
-        Post_rtable `rtable'
-        if `rc' exit `rc'
-    }
+    Replay_from_r, `diopts'
+    Describe_newvars `r(ifgenerate)'
 end
 
 program _ereturn_cmdline, eclass
     eret local cmdline `"lnmor `0'"'
+end
+
+program _ereturn_est_cmdline, eclass
+    eret local est_cmdline `"`0'"'
 end
 
 program _return_cmdline, rclass
@@ -90,11 +76,11 @@ end
 
 program _parse_opts
     _parse comma lhs 0 : 0
-    syntax [, vce(passthru) post or noHEADer NOSE /*
+    syntax [, vce(passthru) post or noHEADer noTABle NOSE /*
         */ IFGENerate(passthru) RIFgenerate(passthru) lnmorspec(str asis) * ]
     if `"`lnmorspec'"'!="" {
         // lnmor cmd varlist [if] [in], options lnmorspec()
-        local options `vce' `post' `or' `header '`nose' /*
+        local options `vce' `post' `or' `header' `table' `nose' /*
             */ `ifgenerate' `rifgenerate' `options'
         if `"`options'"'!="" {
             local options , `options'
@@ -104,16 +90,16 @@ program _parse_opts
         local 0 `lnmorspec'
         c_local 0 `0'
         _parse comma lhs 0 : 0
-        syntax [, post or noHEADer * ]
+        syntax [, post or noHEADer noTABle * ]
         _get_diopts diopts options, `options'
-        c_local diopts `or' `header' `diopts'
+        c_local diopts `or' `header' `table' `diopts'
         c_local post `post'
         c_local 00 `lhs', `options'
         exit
     }
     // display options etc.
     _get_diopts diopts options, `options'
-    c_local diopts `or' `header' `diopts'
+    c_local diopts `or' `header' `table' `diopts'
     c_local post `post'
     // svy
     if `"`e(prefix)'"'=="svy" {
@@ -135,7 +121,7 @@ program _parse_opts
                 exit 198
             }
             c_local 00 `svy' noheader notable: /*
-                */ _lnmor_`svytype' `estcmd' /*
+                */ _lnmor_`svytype' estimate `estcmd' /*
                 */ lnmorspec(`lhs', post saveifuninmata `options')
         }
         else {
@@ -175,10 +161,10 @@ program _parse_opts
         }
         _on_colon_parse `e(cmdline_mi)'
         _parse_mi `s(before)' // returns mi, mieform
-        if `"`mieform'"'=="" local eform `mieform'
+        if `"`mieform'"'!="" local eform `mieform'
         _parse_estcmd 0 `s(after)' // returns estcmd
-        c_local 00 `mi' `eform' `header' `diopts' `post': lnmor `estcmd' /*
-            */ lnmorspec(`lhs', post `options')
+        local mi `mi' `eform' `header' `table' `diopts' `post'
+        c_local 00 `mi': lnmor `estcmd' lnmorspec(`lhs', post `options')
         c_local prefix "mi"
         exit
     }
@@ -188,15 +174,15 @@ program _parse_opts
         c_local 00 `lhs', `vce' `nose' `ifgenerate' `rifgenerate' `options'
         exit
     }
-    _check_source_model `e(cmd)' // returns estcmd
+    _check_source_model `e(cmd)'
     if `"`ifgenerate'`rifgenerate'"'!="" {
         di as err "{bf:ifgenerate()} not allowed with replication based VCE"
         exit 198
     }
-    _parse_estcmd 1 `e(cmdline)'
+    _parse_estcmd 1 `e(cmdline)' // returns estcmd
     if `"`e(clustvar)'"'!="" local cluster cluster(`e(clustvar)')
     c_local 00 `estcmd' `vce' `cluster' `eform' `diopts' /*
-        */ lnmorspec(`lhs', post nose `options')
+        */ lnmorspec(`lhs', post nose `or' `options')
     c_local prefix "`prefix'"
 end
 
@@ -206,38 +192,21 @@ program _parse_svy
     c_local svy `lhs', `options'
 end
 
-program _ereturn_svyr, eclass
-    local k_eq `"`e(k_eq_lnmor)'"'
-    tempname b V
-    mat `b' = e(b_lnmor)
-    if `"`e(wtype)'"'!="" local awgt [aw`e(wexp)'] // really needed?
-    _ms_build_info `b' if e(sample) `awgt'
-    ereturn repost b=`b', rename
-    eret local V_modelbased "" // remove matrix e(V_modelbased)
-    foreach vmat in srs srssub srswr srssubwr msp {
-        capt confirm matrix e(V_`vmat')
-        if _rc==1 exit _rc
-        if _rc continue
-        matrix `V' = e(V)
-        mata: st_replacematrix(st_local("V"), st_matrix("e(V_`vmat')"))
-        eret matrix V_`vmat' `V'
-    }
-    eret scalar k_eq = `k_eq'
-    eret local k_eq_lnmor ""
-    eret local predict ""
-    _ereturn_svy
-end
-
 program _ereturn_svy, eclass
+    eret local est_cmdline `"`0'"'
     eret local cmdname ""
     eret local command ""
+    eret local predict ""
 end
 
 program _parse_mi // remove -post-, exctract eform()
     _parse comma lhs 0 : 0
     syntax [, post or eform(passthru) * ]
+    if "`or'"!="" {
+        if `"`eform'"'=="" local eform eform(Odds Ratio)
+    }
     c_local mi `lhs', cmdok `options'
-    c_local mieform `or' `eform'
+    c_local mieform `eform'
 end
 
 program _parse_estcmd // remove -or-; possibly remove -vce-, -cluster-, -robust-
@@ -306,8 +275,8 @@ program _postrtoe, eclass
     }
 end
 
-program Display
-    syntax [, or noHEADer eform(passthru) * ]
+program Replay, rclass
+    syntax [, or noHEADer noTABle eform(passthru) * ]
     if "`or'"!="" & `"`eform'"'=="" local eform eform(Odds Ratio)
     if "`header'"=="" {
         if `"`eform'"'!="" local title "Marginal odds ratio"
@@ -361,28 +330,44 @@ program Display
         }
         di ""
     }
-    eret di, `eform' `options'  // eform does not seem to work if e(V) is missing
-    local dxtype `"`e(dxtype)'"'
-    if `"`dxtype'"'=="" exit
-    di as txt "Terms affected by dx():" _c
-    forv i = 1/`e(nterms)' {
-        if e(dx`i')==1 di as res " `e(term`i')'" _c
-    }
-    di ""
-    if `"`dxtype'"'=="levels" {
-        di as txt "Levels of dx(): " as res `"`e(dxlevels)'"'
+    if "`table'"=="" {
+        eret di, `eform' `options' /* note: eform does not seem to work if e(V)
+                                      is missing */
+        return add
+        local dxtype `"`e(dxtype)'"'
+        if `"`dxtype'"'=="" exit
+        di as txt "Terms affected by dx():" _c
+        forv i = 1/`e(nterms)' {
+            if e(dx`i')==1 di as res " `e(term`i')'" _c
+        }
+        di ""
+        if `"`dxtype'"'=="levels" {
+            di as txt "Levels of dx(): " as res `"`e(dxlevels)'"'
+        }
     }
 end
 
-program Post_rtable, rclass
+program Replay_from_r, rclass
+    tempname ecurrent
+    _estimates hold `ecurrent', restore
+    _postrtoe
     return add
-    return matrix table = `0'
+    Replay `0'
+    return add
+end
+
+program Describe_newvars
+    if `"`0'"'=="" exit
+    tempname rcurrent
+    _return hold `rcurrent'
+    describe `0'
+     _return restore `rcurrent'
 end
 
 program _lnmor, rclass
     syntax varlist(numeric fv) [, nowarn CONStant /*
         */ kmax(numlist int max=1 >1 missingokay) /*
-        */ dx DX2(passthru) delta DELTA2(passthru) CENtered NORMalize /*
+        */ dx DX2(passthru) delta DELTA2(passthru) CENTERed NORMalize /*
         */ EPSilon /* undocumented
         */ at(passthru) atmax(int 50) /* 
         */ noDOTs NOSE saveifuninmata /*
@@ -608,8 +593,9 @@ program _lnmor, rclass
                 rename `cname`j'' `name`j''
             }
             if "`dots'"=="" {
-                local kj = `k`j'' * `npred'
-                _progress_info "`name`j''[`kj']" `lpos' `lsize'
+                //local kj = `k`j'' * `npred'
+                //_progress_info "`name`j''[`kj']" `lpos' `lsize'
+                _progress_info "`name`j''" `lpos' `lsize'
             }
             local opts /*
                 */ name(`name`j'') levels(`levels`j'') k(`k`j'') /*
@@ -1419,13 +1405,12 @@ void _at_expand(real scalar K0, real scalar J, real scalar atmax)
 void _get_levels(string scalar j)
 {
     string scalar    Name, vtype, dxtype, dxlevels
-    real scalar      k, kmax, dots
+    real scalar      k, kmax
     real colvector   X, w, p, a, b
     real matrix      L
     
     // setup
     Name     = st_local("name"+j)
-    dots     = st_local("dots")==""
     vtype    = st_local("type"+j)
     dxtype   = st_local("dxtype"+j)
     dxlevels = st_local("dxlevels")
@@ -1460,12 +1445,12 @@ void _get_levels(string scalar j)
             }
             a = selectindex(_mm_unique_tag(X))
             k = rows(a)
-            if (vtype!="factor" & k>kmax) { // appply binning if necessary
-                if (dots) printf("{txt}(%s has %g levels", Name, k)
+            if (vtype!="factor" & k>kmax) { // apply binning if necessary
+                printf("{txt}(%s has %g levels", Name, k)
                 _get_levels_bin(X, w, kmax)
                 a = selectindex(_mm_unique_tag(X))
                 k = rows(a)
-                if (dots) printf("; using %g binned levels)\n", k)
+                printf("; using %g binned levels)\n", k)
                 Name = st_tempname(1)
                 st_store(p, st_addvar("double", Name), X)
             }
@@ -1627,7 +1612,7 @@ real matrix __lnmor_IF_q(real colvector p, real colvector dp, real matrix X,
     IF = (q :- qbar) + mIF * __lnmor_IF_q_colsum(dp, dq, X, cons)'
     if (st_local("muif")!="") {
         IF = IF + muIF * 
-            quadcolsum(dp :* (dq :* dz :+ st_data(., st_local("ddz"))))
+            quadcolsum(dp :* (dq :* dz :+ st_data(., st_local("ddz"))))         // or should it just be "dq", not "dq :* dz"
     }
     return(IF)
 }
@@ -1652,7 +1637,7 @@ real rowvector __lnmor_IF_q_colsum(real colvector dp, real colvector dq,
     k = cols(dzbX)
     for (;j;j--) {
         if (dzbp[j])     sum[j] = quadsum(dp:*(dq:*X[,j] :+ dzb[j]:*dzbX[,k--]))
-        else if (dzb[j]) sum[j] = quadsum(dp:*(dq :* X[,j] :+ dzb[j]))
+        else if (dzb[j]) sum[j] = quadsum(dp:*(dq:*X[,j] :+ dzb[j]))
         else             sum[j] = quadsum(dpdq :* X[,j])
     }
     return(sum)

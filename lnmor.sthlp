@@ -1,5 +1,5 @@
 {smcl}
-{* 29dec2022}{...}
+{* 06jan2023}{...}
 {hi:help lnmor}{...}
 {right:{browse "http://github.com/benjann/lnmor/"}}
 {hline}
@@ -14,6 +14,7 @@
     {help lnmor##options:Options} -
     {help lnmor##examples:Examples} -
     {help lnmor##returns:Stored results} -
+    {help lnmor##refs:References} -
     {help lnmor##author:Author} -
     {help lnmor##alsosee:Also see}
 
@@ -32,14 +33,24 @@
         {it:term} [{it:term} ...]
 
 {pstd}
-    and {it:term} may be a simple {varname}, a factor variable specification
-    such as {cmd:i.}{it:varname}, {cmd:ibn.}{it:varname}, or
-    {bind:{cmd:i(2 3 4).}{it:varname}}, or an interaction specification of a
-    continuous variable with itself, such as
-    {cmd:c.}{it:varname}{cmd:##}{cmd:c.}{it:varname}
-    (see {help fvvarlist}; interactions containing different variables or
-    interactions involving factor variables or are not allowed). Consecutive
-    elements referring to the same variable (e.g.,
+    and {it:term} may be:
+
+{phang2}
+    (1) a simple {varname}
+
+{phang2}
+    (2) a factor variable specification such as
+    {cmd:i.}{it:varname}, {cmd:ibn.}{it:varname}, or
+    {bind:{cmd:i(2 3 4).}{it:varname}}; see {help fvvarlist}
+
+{phang2}
+    (3) an interaction specification of a continuous variable with itself, such
+    as {cmd:c.}{it:varname}{cmd:##}{cmd:c.}{it:varname};
+    see {help fvvarlist}; interactions containing multiple variables or
+    interactions involving factor variables or are not allowed
+
+{pmore}
+    Consecutive elements referring to the same variable (e.g.,
     {cmd:2.cat 3.cat 4.cat} or {cmd:x1 c.x1#c.x1 c.x1#c.x1#c.x1})
     will be merged into a single term (as long as they are of the same type). Likewise,
     {varlist} specifications such as {cmd:x*} or {cmd:x1-x5}, or groups
@@ -57,7 +68,7 @@
 {synopt:{cmdab:dx}[{cmd:(}{help lnmor##dx:{it:spec}}{cmd:)}]}use derivative-based
     evaluation method instead of fractional logit (continuous terms only)
     {p_end}
-{synopt:{cmd:delta}[{cmd:(}{it:#}{cmd:)}]}let {cmd:dx()} compute 
+{synopt:{cmd:delta}[{cmd:(}{it:#}{cmd:)}]}let {cmd:dx()} compute
     discrete change effects rather than derivatives
     {p_end}
 {synopt:{opt center:ed}}use symmetric definition of discrete change effects
@@ -105,6 +116,8 @@
     {p_end}
 {synopt :{opt nohead:er}}suppress table header
     {p_end}
+{synopt :{opt notab:le}}suppress coefficients table
+    {p_end}
 {synopt :{help estimation options##display_options:{it:display_options}}}standard display option
     {p_end}
 {synopt :{opt coefl:egend}}display legend instead of statistics
@@ -122,8 +135,8 @@
     works by applying fractional logit ({helpb fracreg}) to averaged
     counterfactual predictions from the original model. Alternatively, for
     continuous predictors, specify option {helpb lnmor##dx:dx()} to compute
-    derivative-based results. For methods and formulas see 
-    {help lnmor##author:Jann and Karlson (2022)}.
+    derivative-based results. For methods and formulas see
+    {browse "https://ideas.repec.org/p/bss/wpaper/44.html":Jann and Karlson (2023)}.
 
 {pstd}
     {cmd:lnmor} requires {helpb moremata} to be installed on the system. Type
@@ -138,7 +151,7 @@
     {cmdab:dx}[{cmd:(}{it:spec}{cmd:)}] uses a derivative-based approach
     to compute results for continuous terms. By default, {cmd:lnmor} generates
     population-averaged counterfactual predictions for each level of a variable
-    and then computes the marginal OR by applying fractional logit 
+    and then computes the marginal OR by applying fractional logit
     ({helpb fracreg}) to these averaged predictions. Alternatively, if
     {cmd:dx()} is specified, results will be obtained by taking derivatives of
     population-averaged counterfactual predictions. This is only relevant for
@@ -174,15 +187,15 @@
     to {cmd:delta(1)} (unit change effect). {cmd:delta()} implies {cmd:dx()}.
 
 {pmore}
-    Discrete change effect are not defined, if {it:#} is 0. In this case, {cmd:lnmor}
-    will compute (log) odds rather than (log) odds ratios. That is, you can 
-    specify {cmd:delta(0)} to obtain levels rather than effects ({cmd:centered}
-    and {cmd:normalize} will be ignored).
+    Discrete change effects are not defined if {it:#} is 0. In this case, {cmd:lnmor}
+    will compute (log) odds rather than (log) odds ratios. That is, you can
+    specify {cmd:delta(0)} to obtain levels rather than effects (options
+    {cmd:centered} and {cmd:normalize} will be ignored in this case).
 
 {phang}
     {opt centered} requests that discrete change effects are computed
     using predictions at {it:t}+{it:#}/2 and {it:t}-{it:#}/2 rather than
-    {it:t}+{it:#} and {it:t}. {cmd:centered} is only relevant if {cmd:delta()}
+    at {it:t}+{it:#} and {it:t}. {cmd:centered} is only relevant if {cmd:delta()}
     has been specified.
 
 {phang}
@@ -226,7 +239,7 @@
     {opt constant} includes the constant of the fractional logit in the
     results vector. The default is to remove the constant. Including
     the constant may be helpful, for example, if you want to generate
-    predictions from results of nonlinear terms. {cmd:constant} cannot be
+    predictions from nonlinear terms. {cmd:constant} cannot be
     combined with {cmd:dx()} and is not allowed if {it:termlist} contains
     multiple terms.
 
@@ -274,7 +287,7 @@
 {phang}
     {opt ifscaling(spec)} determines the scaling of the stored (recentered) influence
     functions. {it:spec} can be {opt t:otal} (scaling for analysis by
-    {helpb total}) or {opt m:ean} (scaling for analysis by {helpb mean}). Default is 
+    {helpb total}) or {opt m:ean} (scaling for analysis by {helpb mean}). Default is
     {cmd:ifscaling(total)}.
 
 {phang}
@@ -290,13 +303,17 @@
     that is, exp(b) rather than b. Standard errors and confidence intervals are
     similarly transformed. This option affects how results are displayed, not
     how they are estimated. {cmd:or} may be specified at estimation or when
-    replaying previously estimated results.
+    replaying previously estimated results that were stored in {cmd:e()} using
+    option {cmd:post}.
 
 {phang}
     {opt noheader} suppresses the display of the table header.
 
 {phang}
-    {it:display_options} are usual display options as documented in
+    {opt notable} suppresses the display of the coefficients table.
+
+{phang}
+    {it:display_options} are display options as documented in
     {helpb estimation options##display_options:[R] Estimation options}.
 
 {phang}
@@ -377,7 +394,7 @@
     {cmd:ssc install coefplot} to make {cmd:coefplot} available on your system):
 
         . {stata estimates store dx}
-        . {stata coefplot dx, at(levels1[,1]) yline(0) yti(ln OR)}
+        . {stata coefplot dx, at(levels) yline(0) yti(ln OR)}
 
 {pstd}
     The effect appears to be positive at the bottom and at the top, and negative
@@ -395,7 +412,7 @@
     illustrated as follows:
 
 {p 8 12 2}. {stata local function `=el(r(b),1,1)' + 2*`=el(r(b),1,2)'*x + 3*`=el(r(b),1,3)'*x^2}{p_end}
-{p 8 12 2}. {stata coefplot dx, at(levels1[,1]) yline(0) yti(ln OR) addplot(function `function', range(0 18))}{p_end}
+{p 8 12 2}. {stata coefplot dx, at(levels) yline(0) yti(ln OR) addplot(function `function', range(0 18))}{p_end}
 
 {pstd}
     As is evident, the effect function from the second approach matches the
@@ -505,8 +522,23 @@
 {pstd}
 If {cmd:post} is specified, results are stored in {cmd:e()} rather than
 {cmd:r()}, and function {cmd:e(sample)} that marks the estimation sample is
-added. An exception is {cmd:r(table)}, which will remain in {cmd:r()}; see 
+added. An exception is {cmd:r(table)}, which will remain in {cmd:r()}; see
 help {helpb _coef_table} or {helpb ereturn} for details in {cmd:r(table)}.
+
+{pstd}
+Likewise, results are stored in {cmd:e()} rather than {cmd:r()}
+if {cmd:vce(bootstrap)} or {cmd:vce(jackknife)} is specified
+or if {cmd:lnmor} is applied after {helpb svy} or {helpb mi estimate}.
+
+
+{marker refs}{...}
+{title:References}
+
+{phang}
+    Jann, Ben, Kristian Bernt Karlson. 2023. Estimation of marginal odds ratios. University
+    of Bern Social Sciences Working Papers 44. Available from
+    {browse "https://ideas.repec.org/p/bss/wpaper/44.html"}.
+    {p_end}
 
 
 {marker author}{...}
@@ -518,14 +550,6 @@ help {helpb _coef_table} or {helpb ereturn} for details in {cmd:r(table)}.
 {pstd}
     Thanks for citing this software as
 
-{phang2}
-    Jann, B., K.B. Karlson. 2022. Estimation of marginal odds ratios. University
-    of Bern Social Sciences Working Papers 44. Available from
-    {browse "https://ideas.repec.org/p/bss/wpaper/44.html"}.
-    {p_end}
-{pstd}
-    or
-    {p_end}
 {phang2}
     Jann, B. 2022. lnmor: Stata module to compute marginal odds
     ratios after model estimation. Available from {browse "http://github.com/benjann/lnmor/"}.

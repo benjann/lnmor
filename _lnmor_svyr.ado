@@ -1,33 +1,27 @@
-*! version 1.0.2  31aug2022  Ben Jann
+*! version 1.0.3  30dec2022  Ben Jann
 *! helper program for -lnmor- after -svy-; do not use manually
 
-program _lnmor_svyr, eclass properties(svyr)
+program _lnmor_svyr, eclass properties(svylb)
     version 15
     local version : di "version " string(_caller()) ":"
+    gettoken subcmd 0 : 0
+    if `"`subcmd'"'=="predict" {
+        _lnmor_svyr_p `0'
+        exit
+    }
+    if `"`subcmd'"'!="estimate" exit 198
     `version' lnmor `0'
-    local k_eq = e(k_eq)
-    tempname b
-    mat `b' = e(b)
-    ereturn matrix b_lnmor = `b', copy
-    mata: _ereturn_svy_rename()
-    ereturn repost b=`b', rename
-    eret local k_eq_lnmor "`k_eq'"
-    eret local predict "_lnmor_svyr_p"
+    eret local predict "_lnmor_svyr predict"
 end
 
-version 15
-mata:
-mata set matastrict on
-
-void _ereturn_svy_rename()
-{
-    string matrix cstripe
-    
-    cstripe = st_matrixcolstripe(st_local("b"))
-    cstripe[,1] = cstripe[,1] :+ "@" :+ cstripe[,2]
-    cstripe[,2] = J(rows(cstripe), 1, "_cons")
-    st_matrixcolstripe(st_local("b"), cstripe)
-}
-
+program _lnmor_svyr_p
+    version 15
+    syntax [anything] [if] [in], [ SCores ]
+    _score_spec `anything', ignoreeq
+    local vlist `s(varlist)'
+    local tlist `s(typlist)'
+    mata: st_store(., /*
+        */ st_addvar(tokens(st_local("tlist")), tokens(st_local("vlist"))), /*
+        */ *findexternal("_LNMOR_TMP_IFs"))
+    mata mata drop _LNMOR_TMP_IFs
 end
-exit
