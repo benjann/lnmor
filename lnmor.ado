@@ -1,56 +1,62 @@
-*! version 1.1.1  06jan2023  Ben Jann
+*! version 1.1.2  10jan2023  Ben Jann
 
-program lnmor
+program lnmor, properties(or)
     version 15
     if replay() {
-        if "`e(cmd)'" != "lnmor" {
+        if "`e(cmd)'"!="lnmor" {
+            if `"`e(cmd)'"'=="mi estimate" & `"`e(cmd_mi)'"'=="lnmor" {
+                mi estimate `0'
+                exit
+            }
             error 301
         }
         Replay `0'
         exit
     }
     local version : di "version " string(_caller()) ":"
-    _parse_opts `0' // returns diopts, post, 00, estcmd, prefix
+    _parse_opts `0' // returns 00, diopts, post, prefix, cmdline; may update 0
+    // application with prefix command
     if "`prefix'"!="" {
-        local est_cmdline `"`e(cmdline)'"'
         tempname ecurrent
         _estimates hold `ecurrent', restore
-        if "`prefix'"=="svyr" {
-            nobreak {
-                capt noisily break {
-                    `version' `00'
+        if "`prefix'"=="mi" {
+            // mi: using display routine of mi estimate
+            `version' `00'
+        }
+        else {
+            // svy/bootstrap/jackknife: using own display routine
+            if "`prefix'"=="svyr" {
+                nobreak {
+                    capt noisily break {
+                        `version' `00'
+                    }
+                    if _rc {
+                        local rc = _rc
+                        capt mata mata drop _LNMOR_TMP_IFs
+                        exit `rc'
+                    }
                 }
-                if _rc {
-                    local rc = _rc
-                    capt mata mata drop _LNMOR_TMP_IFs
-                    exit `rc'
-                }
+                _ereturn_svy
             }
-            _ereturn_svy
+            else if "`prefix'"=="svyb" {
+                `version' `00'
+                _ereturn_svy
+            }
+            else { // bootstrap/jackknife
+                `version' `00'
+            }
             Replay, `diopts'
             Describe_newvars `e(ifgenerate)'
         }
-        else if "`prefix'"=="svyb" {
-            local est_cmdline `"`e(cmdline)'"'
-            `version' `00'
-            _ereturn_svy
-            Replay, `diopts'
-        }
-        else if "`prefix'"=="mi" {
-            `version' `00'
-        }
-        else { // bootstrap/jackknife
-            `version' _vce_parserun lnmor, noeqlist mark(CLuster): `00'
-        }
         _ereturn_cmdline `0'
-        _ereturn_est_cmdline `est_cmdline'
+        _ereturn_est_cmdline `cmdline'
         _estimates unhold `ecurrent', not
         exit
     }
-    `estcmd' // rerun estimation command in case of replication VCE
-    _check_source_model `e(cmd)'
+    // application without prefix command
     _lnmor `00'
     _return_cmdline `0'
+    _return_est_cmdline `cmdline'
     if "`post'"!="" {
         _postrtoe, all
         Replay, `diopts'
@@ -74,78 +80,47 @@ program _return_cmdline, rclass
     return local cmdline `"lnmor `0'"'
 end
 
+program _return_est_cmdline, rclass
+    return add
+    return local est_cmdline `"`0'"'
+end
+
 program _parse_opts
+    // check for _lnmor() and run estimation command if needed
     _parse comma lhs 0 : 0
-    syntax [, vce(passthru) post or noHEADer noTABle NOSE /*
-        */ IFGENerate(passthru) RIFgenerate(passthru) lnmorspec(str asis) * ]
-    if `"`lnmorspec'"'!="" {
-        // lnmor cmd varlist [if] [in], options lnmorspec()
-        local options `vce' `post' `or' `header' `table' `nose' /*
-            */ `ifgenerate' `rifgenerate' `options'
-        if `"`options'"'!="" {
-            local options , `options'
-        }
-        c_local estcmd `lhs'`options'
-        c_local prefix ""
-        local 0 `lnmorspec'
-        c_local 0 `0'
+    syntax [, _lnmor(str asis) _prefix(str asis) * ]
+    local has_lnmor = `"`_lnmor'"'!=""
+    if `has_lnmor' {
+        // run estimation command
+        local estcmd `lhs'
+        if `"`options'"'!="" local estcmd `estcmd', `options'
+        if `"`_prefix'"'!="" local estcmd `_prefix': `estcmd'
+        `estcmd'
+        // update syntax
+        local 0 `_lnmor'
+        c_local 0 `0' // update returned cmdline
         _parse comma lhs 0 : 0
-        syntax [, post or noHEADer noTABle * ]
-        _get_diopts diopts options, `options'
-        c_local diopts `or' `header' `table' `diopts'
-        c_local post `post'
-        c_local 00 `lhs', `options'
-        exit
     }
-    // display options etc.
+    // parse options
+    syntax [, vce(passthru) post or noHEADer noTABle NOSE /*
+        */ IFGENerate(passthru) RIFgenerate(passthru) * ]
     _get_diopts diopts options, `options'
-    c_local diopts `or' `header' `table' `diopts'
-    c_local post `post'
-    // svy
-    if `"`e(prefix)'"'=="svy" {
-        local options `ifgenerate' `rifgenerate' `options'
-        _check_source_model `e(cmd)'
-        if `"`vce'"'!="" {
-            di as err "{bf:vce()} not allowed after {bf:svy}"
-            exit 198
-        }
-        local vcetype `"`e(vce)'"'
-        if `"`vcetype'"'=="linearized" local svytype "svyr"
-        else                           local svytype "svyb"
-        _on_colon_parse `e(cmdline)'
-        _parse_svy `s(before)'     // returns svy
-        _parse_estcmd 0 `s(after)' // returns estcmd
-        if "`svytype'"=="svyr" {
-            if `"`nose'"'!="" {
-                di as err "{bf:nose} not allowed after {bf:svy `vcetype'}"
-                exit 198
-            }
-            c_local 00 `svy' noheader notable: /*
-                */ _lnmor_`svytype' estimate `estcmd' /*
-                */ lnmorspec(`lhs', post saveifuninmata `options')
-        }
-        else {
-            if `"`ifgenerate'`rifgenerate'"'!="" {
-                di as err `"{bf:ifgenerate()} not allowed after {bf:svy `vcetype'}"'
-                exit 198
-            }
-            c_local 00 `svy' noheader notable: /*
-                */ _lnmor_`svytype' `estcmd' /*
-                */ lnmorspec(`lhs', post nose `options')
-        }
-        c_local prefix "`svytype'"
-        exit
-    }
-    // or -> eform()
-    if "`or'"!="" local eform eform(Odds Ratio)
-    // mi
+    local diopts `or' `header' `table' `diopts'
+    // multiple imputation
     if `"`e(mi)'"'=="mi" {
-        if `"`e(cmd)'"'=="mi estimate" {
-            _check_source_model `e(cmd_mi)'
+        _parse_miopts, `options'
+        local miopts cmdok `miopts' `post' `diopts'
+        if `"`e(cmd)'"'=="mi estimate" local cmd_mi cmd_mi
+        else                           local cmd_mi cmd
+        if `"`e(`cmd_mi')'"'=="lnmor" {
+            // results in memory are from lnmor
+            local cmdline `"`e(est_cmdline)'"'
         }
         else {
-            _check_source_model `e(cmd)'
+            _check_source_model `e(`cmd_mi')'
+            local cmdline `"`e(cmdline_mi)'"'
         }
+        c_local cmdline `"`cmdline'"'
         if `"`ifgenerate'`rifgenerate'"'!="" {
             di as err "{bf:ifgenerate()} not allowed after {bf:mi estimate}"
             exit 198
@@ -154,35 +129,96 @@ program _parse_opts
             di as err "{bf:nose} not allowed after {bf:mi estimate}"
             exit 198
         }
-        _parse_opts_vce, `vce' // returns prefix
-        if `"`vce'"'!="" {
+        _parse_opts_vce, `vce' // returns prefix if bootstrap or jackknife
+        if "`prefix'"!="" {
             di as err "{bf:vce(`prefix')} not allowed after {bf:mi estimate}"
             exit 198
         }
-        _on_colon_parse `e(cmdline_mi)'
-        _parse_mi `s(before)' // returns mi, mieform
-        if `"`mieform'"'!="" local eform `mieform'
+        _on_colon_parse `cmdline' // remove -mi estimate-
+        if `"`e(prefix)'"'!="" {
+            // move prefix (e.g. svy) into option
+            _on_colon_parse `s(after)'
+            local _prefix _prefix(`s(before)')
+        }
         _parse_estcmd 0 `s(after)' // returns estcmd
-        local mi `mi' `eform' `header' `table' `diopts' `post'
-        c_local 00 `mi': lnmor `estcmd' lnmorspec(`lhs', post `options')
+        c_local 00 mi estimate, `miopts':/*
+            */ lnmor `estcmd' _lnmor(`lhs', post `options') `_prefix'
         c_local prefix "mi"
         exit
     }
-    // bootstrap/jackknife
-    _parse_opts_vce, `vce' // returns prefix
-    if "`prefix'"=="" {
-        c_local 00 `lhs', `vce' `nose' `ifgenerate' `rifgenerate' `options'
+    // confirm that e() contains valid model and collect command line
+    if !`has_lnmor' & `"`e(cmd)'"'=="lnmor" {
+        // results in memory are from lnmor
+        local cmdline `"`e(est_cmdline)'"'
+    }
+    else {
+        _check_source_model `e(cmd)'
+        local cmdline `"`e(cmdline)'"'
+    }
+    c_local cmdline `"`cmdline'"'
+    // svy
+    if `"`e(prefix)'"'=="svy" {
+        if `"`vce'"'!="" {
+            di as err "{bf:vce()} not allowed after {bf:svy}"
+            exit 198
+        }
+        local vcetype `"`e(vce)'"'
+        if `"`vcetype'"'=="linearized" local svytype "svyr"
+        else                           local svytype "svyb"
+        _on_colon_parse `cmdline'
+        _parse_svy `s(before)'     // returns svy
+        _parse_estcmd 0 `s(after)' // returns estcmd
+        if "`svytype'"=="svyr" {
+            // linearized VCE
+            if `"`nose'"'!="" {
+                di as err "{bf:nose} not allowed after {bf:svy `vcetype'}"
+                exit 198
+            }
+            c_local 00 `svy' noheader notable:/*
+                */ _lnmor_`svytype' estimate `estcmd'/*
+                */ _lnmor(`lhs', post saveifuninmata/*
+                */ `ifgenerate' `rifgenerate' `options')
+        }
+        else {
+            // replication-based VCE
+            if `"`ifgenerate'`rifgenerate'"'!="" {
+                di as err `"{bf:ifgenerate()} not allowed after {bf:svy `vcetype'}"'
+                exit 198
+            }
+            c_local 00 `svy' noheader notable:/*
+                */ _lnmor_`svytype' `estcmd'/*
+                */ _lnmor(`lhs', post nose `options')
+        }
+        c_local diopts `diopts'
+        c_local prefix "`svytype'"
         exit
     }
-    _check_source_model `e(cmd)'
+    // check for vce(bootstrap) or vce(jackknife)
+    _parse_opts_vce, `vce' // returns prefix
+    if "`prefix'"=="" {
+        if `"`e(cmd)'"'=="lnmor" {
+            // results in memory are from lnmor; must refit the original model
+            di as txt `"(refitting {bf:`e(est_cmd)'} model)"'
+            quietly `cmdline'
+        }
+        c_local 00 `lhs', `vce' `nose' `ifgenerate' `rifgenerate' `options'
+        c_local diopts `diopts'
+        c_local post `post'
+        c_local prefix ""
+        exit
+    }
+    // bootstrap / jackknife
     if `"`ifgenerate'`rifgenerate'"'!="" {
         di as err "{bf:ifgenerate()} not allowed with replication based VCE"
         exit 198
     }
-    _parse_estcmd 1 `e(cmdline)' // returns estcmd
-    if `"`e(clustvar)'"'!="" local cluster cluster(`e(clustvar)')
-    c_local 00 `estcmd' `vce' `cluster' `eform' `diopts' /*
-        */ lnmorspec(`lhs', post nose `or' `options')
+    if "`prefix'"=="jackknife" local ropts jkopts
+    else                       local ropts bootopts
+    _parse_estcmd 1 `cmdline' // returns estcmd
+    c_local 00 _vce_parserun lnmor, noeqlist wtypes(pw iw)/*
+        */ `ropts'(noheader notable force):/*
+        */ `estcmd' `vce' _lnmor(`lhs', post nose `options')
+    c_local diopts `diopts'
     c_local prefix "`prefix'"
 end
 
@@ -193,27 +229,23 @@ program _parse_svy
 end
 
 program _ereturn_svy, eclass
-    eret local est_cmdline `"`0'"'
     eret local cmdname ""
     eret local command ""
     eret local predict ""
 end
 
-program _parse_mi // remove -post-, exctract eform()
-    _parse comma lhs 0 : 0
-    syntax [, post or eform(passthru) * ]
-    if "`or'"!="" {
-        if `"`eform'"'=="" local eform eform(Odds Ratio)
-    }
-    c_local mi `lhs', cmdok `options'
-    c_local mieform `eform'
+program _parse_miopts
+    syntax [, MIopts(str) * ]
+    c_local miopts `miopts'
+    c_local options `options'
 end
 
-program _parse_estcmd // remove -or-; possibly remove -vce-, -cluster-, -robust-
-    gettoken removevce 0 : 0
+program _parse_estcmd // remove or; possibly remove vce, cluster, robust
+    gettoken remove 0 : 0
+    if `remove' local rmopts or vce(passthru) CLuster(passthru) Robust
+    else        local rmopts or
     _parse comma lhs 0 : 0
-    syntax [, vce(passthru) CLuster(passthru) Robust or  * ]
-    if !`removevce' local options `robust' `cluster' `vce' `options'
+    syntax [, `rmopts' * ]
     c_local estcmd `lhs', `options'
 end
 
@@ -679,7 +711,6 @@ program _lnmor, rclass
     return scalar k_eform     = `K'
     return local  cmd         "lnmor"
     return local  est_cmd     `"`est_cmd'"'
-    return local  est_cmdline `"`e(cmdline)'"'
     return local  title       "Marginal (log) odds ratio"
     return scalar N           = `N'
     return scalar sum_w       = `sum_w'

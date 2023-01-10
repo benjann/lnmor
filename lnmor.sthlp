@@ -1,5 +1,5 @@
 {smcl}
-{* 06jan2023}{...}
+{* 10jan2023}{...}
 {hi:help lnmor}{...}
 {right:{browse "http://github.com/benjann/lnmor/"}}
 {hline}
@@ -107,6 +107,11 @@
 {synopt :{opt ifs:caling(spec)}}scaling of (recentered) IFs; {it:spec} if {cmd:total} (default) or {cmd:mean}
     {p_end}
 {synopt :{opt replace}}allow replacing existing variables
+    {p_end}
+
+{syntab :MI}
+{synopt :{cmdab:mi:opts(}{help mi estimate:{it:options}}{cmd:)}}options to be
+    passed through to {helpb mi estimate}
     {p_end}
 
 {syntab :Reporting}
@@ -294,6 +299,11 @@
     {opt replace} allows to overwrite existing variables.
 
 {phang}
+    {opt miopts(options)} specifies options to be passed through to
+    {helpb mi estimate}. This is only allowed when running {cmd:lnmor} after
+    a model to which {helpb mi estimate} has been applied.
+
+{phang}
     {opt level(#)} specifies the confidence level, as a percentage, for
     confidence intervals. The default is {cmd:level(95)} or as
     set by {helpb set level}.
@@ -423,12 +433,11 @@
 
 {pstd}
     By default, {cmd:lnmor} reports robust standard errors based on
-    influence-functions (possibly including clustering, which will be picked up
-    automatically if the original model included clustering). If you want to
-    obtain replication-based standard errors, specify {cmd:vce(bootstrap)} or
-    {cmd:vce(jackknife)} with {cmd:lnmor}, not with the original command
-    (it does not hurt to specify these options with the original command, but
-    {cmd:lnmor} will not pick them up). An example is as follows:
+    influence-functions. If you want to obtain replication-based standard
+    errors, specify {cmd:vce(bootstrap)} or {cmd:vce(jackknife)} with
+    {cmd:lnmor}, not with the original command (it does not hurt to specify
+    these options with the original command, but {cmd:lnmor} will not pick them
+    up). An example is as follows:
 
         . {stata webuse lbw}
         . {stata logit low i.smoke i.race age lwt ptl ht ui, or}
@@ -464,7 +473,7 @@
     has been applied.
 
         . {stata webuse mheart1s20}
-        . {stata "mi estimate, dots: logit attack i.smokes age bmi i.hsgrad i.female, or"}
+        . {stata "mi estimate, or: logit attack i.smokes age bmi i.hsgrad i.female"}
         . {stata lnmor i.smokes, or}
 
 

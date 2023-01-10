@@ -23,6 +23,15 @@ to install `moremata`.
 
 Main changes:
 
+    10jan2023 (version 1.1.2)
+    - lnmor can now be specified repeatedly even if results are posted in e()
+      (i.e. if option -post- or option -vce()- has been specified, or if lnmor has
+      been applied after -mi estimate- or after -svy-)
+    - option -miopts()- added; mi options will no longer be collected from
+      command line of model
+    - lnmor now also works after -mi estimate: svy: ...-
+    - -or- added to program properties
+
     06jan2023 (version 1.1.1)
     - option -notable- added
     - revised implementation of support for svy
