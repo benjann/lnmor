@@ -23,6 +23,18 @@ to install `moremata`.
 
 Main changes:
 
+    13jan2023 (version 1.1.3)
+    - new subsample() option to evaluate the marginal odds ratio over a subsample
+      of the data only; use this option, for example, to obtain an ATET equivalent
+      of a marginal OR (by default, an ATE equivalent is computed)
+    - the core of the code of lnmor has been rewritten (in part, so that the subsample
+      option can be supported); the code is now better organized and also faster in
+      most situations
+    - option [no]tbal added
+    - lnmor did not work with fweights; this is fixed
+    - IFs were not updated to take account of the estimation of the mean in case of
+      dx(atmean); this is fixed
+
     10jan2023 (version 1.1.2)
     - lnmor can now be specified repeatedly even if results are posted in e()
       (i.e. if option -post- or option -vce()- has been specified, or if lnmor has

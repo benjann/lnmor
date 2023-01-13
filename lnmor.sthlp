@@ -1,5 +1,5 @@
 {smcl}
-{* 10jan2023}{...}
+{* 13jan2023}{...}
 {hi:help lnmor}{...}
 {right:{browse "http://github.com/benjann/lnmor/"}}
 {hline}
@@ -39,7 +39,7 @@
     (1) a simple {varname}
 
 {phang2}
-    (2) a factor variable specification such as
+    (2) an indicator variable specification such as
     {cmd:i.}{it:varname}, {cmd:ibn.}{it:varname}, or
     {bind:{cmd:i(2 3 4).}{it:varname}}; see {help fvvarlist}
 
@@ -47,7 +47,7 @@
     (3) an interaction specification of a continuous variable with itself, such
     as {cmd:c.}{it:varname}{cmd:##}{cmd:c.}{it:varname};
     see {help fvvarlist}; interactions containing multiple variables or
-    interactions involving factor variables or are not allowed
+    interactions involving indicator variables or are not allowed
 
 {pmore}
     Consecutive elements referring to the same variable (e.g.,
@@ -65,53 +65,40 @@
 {marker opt}{synopthdr:options}
 {synoptline}
 {syntab :Main}
-{synopt:{cmdab:dx}[{cmd:(}{help lnmor##dx:{it:spec}}{cmd:)}]}use derivative-based
-    evaluation method instead of fractional logit (continuous terms only)
+{synopt:{cmd:dx}[{cmd:(}{help lnmor##dx:{it:spec}}{cmd:)}]}use derivative-based
+    evaluation for continuous terms
     {p_end}
-{synopt:{cmd:delta}[{cmd:(}{it:#}{cmd:)}]}let {cmd:dx()} compute
-    discrete change effects rather than derivatives
+{synopt:{cmd:delta}[{cmd:(}{it:#}{cmd:)}]}compute discrete change effects, not
+    derivatives
     {p_end}
 {synopt:{opt center:ed}}use symmetric definition of discrete change effects
     {p_end}
 {synopt:{opt norm:alize}}normalize discrete change effects
     {p_end}
-{synopt:{cmdab:at(}{help lnmor##at:{it:spec}}{cmd:)}}estimate results at
+{synopt:{cmd:at(}{help lnmor##at:{it:spec}}{cmd:)}}estimate results at
     specified values of covariates
     {p_end}
-{synopt :{opt atmax(#)}}maximum number of patterns allowed in {cmd:at()}
-    {p_end}
-{synopt :{opt kmax(#)}}maximum number of treatment levels before coarsening
-    kicks in; default is {cmd:kmax(100)}
+{synopt:{cmdab:subsamp:le(}{help lnmor##subsmp:{it:spec}}{cmd:)}}restrict
+    evaluation to subsample
     {p_end}
 {synopt :{opt nodot:s}}suppress progress dots
-    {p_end}
-{synopt :{opt nowarn}}suppress variable type warning messages
-    {p_end}
-{synopt:{opt cons:tant}}include constant from {helpb fracreg} in results; only allowed in some situations
     {p_end}
 {synopt :{opt post}}post results in {cmd:e()}
     {p_end}
 
 {syntab :SE/Robust}
-{synopt :{cmd:vce(}{help lnmor##vcetype:{it:vcetype}}{cmd:)}}use
-    replication-based VCE; {it:vcetype} may be {cmdab:boot:strap} or {cmdab:jack:knife}
+{synopt :{cmd:vce(}{help lnmor##vcetype:{it:vcetype}}{cmd:)}}{it:vcetype} may be
+    {cmdab:boot:strap} or {cmdab:jack:knife}
     {p_end}
 {synopt :{opt nose}}do not estimate SEs
     {p_end}
-{synopt :{opt ifgen:erate(spec)}}store influence functions; {it:spec} is
-    {it:namelist} or {it:stub}{cmd:*}
+{synopt :{cmdab:ifgen:erate(}{help lnmor##ifgen:{it:spec}}{cmd:)}}store influence functions
     {p_end}
-{synopt :{opt rif:gerate(spec)}}store recentered influence functions; {it:spec} is
-    {it:namelist} or {it:stub}{cmd:*}
+{synopt :{cmdab:rif:gerate(}{help lnmor##ifgen:{it:spec}}{cmd:)}}store recentered influence functions
     {p_end}
-{synopt :{opt ifs:caling(spec)}}scaling of (recentered) IFs; {it:spec} if {cmd:total} (default) or {cmd:mean}
+{synopt :{cmdab:ifs:caling(}{help lnmor##ifscale:{it:spec}}{cmd:)}}scaling of (recentered) IFs
     {p_end}
 {synopt :{opt replace}}allow replacing existing variables
-    {p_end}
-
-{syntab :MI}
-{synopt :{cmdab:mi:opts(}{help mi estimate:{it:options}}{cmd:)}}options to be
-    passed through to {helpb mi estimate}
     {p_end}
 
 {syntab :Reporting}
@@ -127,6 +114,21 @@
     {p_end}
 {synopt :{opt coefl:egend}}display legend instead of statistics
     {p_end}
+
+{syntab :Seldom used}
+{synopt :{cmdab:mi:opts(}{help mi estimate:{it:options}}{cmd:)}}options to be
+    passed through to {helpb mi estimate}
+    {p_end}
+{synopt :{opt kmax(#)}}maximum number of levels without coarsening
+    {p_end}
+{synopt :{opt atmax(#)}}maximum number of patterns allowed in {cmd:at()}
+    {p_end}
+{synopt:{opt cons:tant}}report constant from {helpb fracreg}
+    {p_end}
+{synopt:[{cmd:no}]{opt tbal}}enforce/prevent balancing in {helpb fracreg}
+    {p_end}
+{synopt :{opt nowarn}}suppress variable type warning messages
+    {p_end}
 {synoptline}
 
 
@@ -136,11 +138,11 @@
 {pstd}
     {cmd:lnmor} computes (adjusted) marginal odds ratios after {helpb logit} or
     {helpb probit} (possibly including the {helpb svy} or {helpb mi estimate}
-    prefix) using G-computation. By default, {cmd:lnmor}
-    works by applying fractional logit ({helpb fracreg}) to averaged
+    prefix) using G-computation. By default, {cmd:lnmor} obtains marginal ORs
+    by applying fractional logit ({helpb fracreg}) to averaged
     counterfactual predictions from the original model. Alternatively, for
     continuous predictors, specify option {helpb lnmor##dx:dx()} to compute
-    derivative-based results. For methods and formulas see
+    derivative-based marginal ORs. For methods and formulas see
     {browse "https://ideas.repec.org/p/bss/wpaper/44.html":Jann and Karlson (2023)}.
 
 {pstd}
@@ -161,7 +163,7 @@
     {cmd:dx()} is specified, results will be obtained by taking derivatives of
     population-averaged counterfactual predictions. This is only relevant for
     continuous terms that do not include interactions. That is, {cmd:dx()} will
-    be ignored for factor-variable terms and interaction terms. {cmd:dx()} will
+    be ignored for factor variable terms and interaction terms. {cmd:dx()} will
     also be ignored if a term is specified as continuous in {cmd:lnmor}, but
     the relevant variable has been included as a factor variable in the
     original model. {it:spec} may be one of the following.
@@ -222,31 +224,20 @@
     variables specified in {it:termlist}. Furthermore, only variables
     that appear as covariates in the original model are allowed.
 
+{marker subsmp}{...}
 {phang}
-    {opt atmax(#)} sets the maximum number of patterns (combinations of values) that is
-    allowed in {cmd:at()}. The default is {cmd:atmax(50)}.
+    {opt subsample(spec)} restricts the evaluation of the marginal odds ratio
+    to a subsample (i.e. counterfactual predictions will averaged over the
+    specified subsample only). The syntax of {it:spec} is
 
-{phang}
-    {opt kmax(#)} sets the maximum number of levels (distinct values) that are
-    allowed for continuous treatments. If a variable has more levels,
-    {cmd:lnmor} will provide approximate results based on linearly binned
-    levels. The default is {cmd:kmax(100)}.
+            [{varname}] [{it:{help if}}]
+
+{pmore}
+   The subsample is defined by observations for which {it:varname}!=0 (and not
+   missing) and for which the {cmd:if} condition applies.
 
 {phang}
     {opt nodots} suppresses the progress dots.
-
-{phang}
-    {opt nowarn} suppresses the warning messages that are displayed if the types
-    of the specified terms do not match the types of the
-    relevant variables in the original model.
-
-{phang}
-    {opt constant} includes the constant of the fractional logit in the
-    results vector. The default is to remove the constant. Including
-    the constant may be helpful, for example, if you want to generate
-    predictions from nonlinear terms. {cmd:constant} cannot be
-    combined with {cmd:dx()} and is not allowed if {it:termlist} contains
-    multiple terms.
 
 {phang}
     {opt post} stores results in {cmd:e()} rather than in {cmd:r()}. {cmd:post}
@@ -265,16 +256,17 @@
     {cmdab:boot:strap} or {cmdab:jack:knife}; see {it:{help vce_option}}. If replication-based
     standard errors are requested, {cmd:lnmor} will reestimate the original model
     within replications. Option {cmd:vce()} is not allowed after {helpb svy}
-    or {helpb mi estimate}.
+    or {helpb mi estimate}, or if the model has been estimates with {cmd:fweight}s.
 
 {phang}
     {opt nose} suppresses calculation of the VCE and standard errors. The
     variance matrix will be set to zero in this case. To save computer time,
-    {cmd:nose} is implied by {cmd:vce(bootstrap)} and {cmd:vce(jackknife)},
+    {cmd:nose} is implied by {cmd:vce(bootstrap)} and {cmd:vce(jackknife)}
     or if {cmd:lnmor} is applied after {helpb svy} with replication-based VCE. Option
     {cmd:nose} is not allowed after {helpb svy} with linearization-based VCE or after
     {helpb mi estimate}.
 
+{marker ifgen}{...}
 {phang}
     {opt ifgenerate(spec)} stores the influence functions of the estimates. Either
     specify a list of new variables names, or specify {it:stub}{cmd:*}, in which
@@ -289,6 +281,7 @@
     of {cmd:ifgenerate()}. Only one of {cmd:ifgenerate()} and {cmd:rifgenerate()}
     is allowed.
 
+{marker ifscale}{...}
 {phang}
     {opt ifscaling(spec)} determines the scaling of the stored (recentered) influence
     functions. {it:spec} can be {opt t:otal} (scaling for analysis by
@@ -297,11 +290,6 @@
 
 {phang}
     {opt replace} allows to overwrite existing variables.
-
-{phang}
-    {opt miopts(options)} specifies options to be passed through to
-    {helpb mi estimate}. This is only allowed when running {cmd:lnmor} after
-    a model to which {helpb mi estimate} has been applied.
 
 {phang}
     {opt level(#)} specifies the confidence level, as a percentage, for
@@ -330,6 +318,42 @@
     {opt coeflegend} specifies that the legend of the coefficients and how to
     specify them in an expression be displayed rather
     than displaying the statistics for the coefficients.
+
+{phang}
+    {opt miopts(options)} specifies options to be passed through to
+    {helpb mi estimate}. This is only allowed when running {cmd:lnmor} after
+    a model to which {helpb mi estimate} has been applied.
+
+{phang}
+    {opt kmax(#)} sets the maximum number of levels (distinct values) that are
+    allowed for continuous treatments. If a variable has more levels,
+    {cmd:lnmor} will provide approximate results based on linearly binned
+    levels. The default is {cmd:kmax(100)}.
+
+{phang}
+    {opt atmax(#)} sets the maximum number of patterns (combinations of values) that is
+    allowed in {cmd:at()}. The default is {cmd:atmax(50)}.
+
+{phang}
+    {opt constant} includes the constant of the fractional logit in the
+    results vector. The default is to remove the constant. Including
+    the constant may be helpful, for example, if you want to generate
+    predictions from nonlinear terms. {cmd:constant} cannot be
+    combined with {cmd:dx()} and is not allowed if {it:termlist} contains
+    multiple terms.
+
+{phang}
+    [{cmd:no}]{opt tbal} decides whether to weight all treatment levels in the
+    fractional logit equally or whether to weight them by observed
+    frequencies. The default is to weight by observed frequencies unless the
+    fractional logit is saturated (i.e., if all levels are covered by indicator
+    variables in {it:term}), in which case the weights do not change the
+    result. Specify {cmd:tbal} or {cmd:notbal} to override the default behavior.
+
+{phang}
+    {opt nowarn} suppresses the warning messages that are displayed if the types
+    of the specified terms do not match the types of the
+    relevant variables in the original model.
 
 
 {marker examples}{...}
@@ -362,20 +386,18 @@
 {pstd}
     Results can be obtained for several variables in one call:
 
-        . {stata logit low i.smoke i.race age lwt ptl ht ui, or}
         . {stata lnmor i.smoke i.race age lwt, or}
 
 {pstd}
     Use option {helpb lnmor##at:at()} to explore interactions:
 
 {p 8 12 2}. {stata logit low i.smoke i.race age lwt ptl ht ui i.smoke#i.race, or}{p_end}
-{p 8 12 2}. {stata lnmor i.smoke, at(race) or}{p_end}
+        . {stata lnmor i.smoke, at(race) or}
 
 {pstd}
     Use {cmd:ibn.}{it:varname} to obtain marginal odds by level rather than odds ratios:
 
-{p 8 12 2}. {stata logit low i.smoke i.race age lwt ptl ht ui i.smoke#i.race, or}{p_end}
-{p 8 12 2}. {stata lnmor ibn.smoke, at(race) or}{p_end}
+        . {stata lnmor ibn.smoke, at(race) or}
 
 {pstd}
     Note that, for categorical predictors, a combination of {helpb margins} and {helpb nlcom}
@@ -475,6 +497,7 @@
         . {stata webuse mheart1s20}
         . {stata "mi estimate, or: logit attack i.smokes age bmi i.hsgrad i.female"}
         . {stata lnmor i.smokes, or}
+        . {stata lnmor i.smokes, or miopts(dots mcerror)}
 
 
 {marker returns}{...}
@@ -487,7 +510,9 @@
 {p2col 5 23 26 2: Scalars}{p_end}
 {synopt:{cmd:r(N)}}number of observations{p_end}
 {synopt:{cmd:r(N_clust)}}number of clusters{p_end}
+{synopt:{cmd:r(N_subsmp)}}number of observations in subsample{p_end}
 {synopt:{cmd:r(sum_w)}}sum of weights{p_end}
+{synopt:{cmd:r(sum_w_subsmp)}}sum of weights in subsample{p_end}
 {synopt:{cmd:r(k_eq)}}number of equations in {cmd:r(b)}{p_end}
 {synopt:{cmd:r(df_r)}}{cmd:r(N)}-1 or {cmd:r(N_clust)}-1{p_end}
 {synopt:{cmd:r(nterms)}}number of terms{p_end}
@@ -511,6 +536,8 @@
 {synopt:{cmd:r(centered}{cmd:)}}{cmd:centered} or empty{p_end}
 {synopt:{cmd:r(normalize}{cmd:)}}{cmd:normalize} or empty{p_end}
 {synopt:{cmd:r(atnames)}}variable names from {cmd:at()}{p_end}
+{synopt:{cmd:r(subsample)}}specification from {cmd:subsample()}{p_end}
+{synopt:{cmd:r(tbal}{cmd:)}}{cmd:tbal}, {cmd:notbal}, or empty{p_end}
 {synopt:{cmd:r(wtype)}}weight type{p_end}
 {synopt:{cmd:r(wexp)}}weight expression{p_end}
 {synopt:{cmd:r(clustvar)}}name of cluster variable{p_end}
@@ -530,7 +557,7 @@
 
 {pstd}
 If {cmd:post} is specified, results are stored in {cmd:e()} rather than
-{cmd:r()}, and function {cmd:e(sample)} that marks the estimation sample is
+{cmd:r()} and function {cmd:e(sample)} that marks the estimation sample is
 added. An exception is {cmd:r(table)}, which will remain in {cmd:r()}; see
 help {helpb _coef_table} or {helpb ereturn} for details in {cmd:r(table)}.
 
@@ -538,6 +565,11 @@ help {helpb _coef_table} or {helpb ereturn} for details in {cmd:r(table)}.
 Likewise, results are stored in {cmd:e()} rather than {cmd:r()}
 if {cmd:vce(bootstrap)} or {cmd:vce(jackknife)} is specified
 or if {cmd:lnmor} is applied after {helpb svy} or {helpb mi estimate}.
+
+{pstd}
+{cmd:lnmor} can be applied repeatedly even if results are stored in
+{cmd:e()} (which overwrites the original model); {cmd:lnmor}
+will refit the original model if necessary.
 
 
 {marker refs}{...}

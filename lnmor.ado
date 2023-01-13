@@ -1,4 +1,4 @@
-*! version 1.1.2  10jan2023  Ben Jann
+*! version 1.1.3  13jan2023  Ben Jann
 
 program lnmor, properties(or)
     version 15
@@ -54,7 +54,7 @@ program lnmor, properties(or)
         exit
     }
     // application without prefix command
-    _lnmor `00'
+    Estimate `00'
     _return_cmdline `0'
     _return_est_cmdline `cmdline'
     if "`post'"!="" {
@@ -212,6 +212,10 @@ program _parse_opts
         di as err "{bf:ifgenerate()} not allowed with replication based VCE"
         exit 198
     }
+    if `"`e(wtype)'"'=="fweight" {
+        di as err "{bf:vce(`prefix')} not allowed with {bf:fweight}s"
+        exit 198
+    }
     if "`prefix'"=="jackknife" local ropts jkopts
     else                       local ropts bootopts
     _parse_estcmd 1 `cmdline' // returns estcmd
@@ -331,6 +335,10 @@ program Replay, rclass
             local c1 = `c1' - `offset1' - `offset2'
             local c2 = `c2' - `offset2'
         }
+        if `"`e(subsample)'"'!="" {
+            di as txt _col(`c1') "Subsample n. obs" _col(`c2') "=" /*
+                */ _col(`c3') as res %`w2'.0gc e(N_subsmp)
+        }
         di as txt _col(`c1') "Command" _col(`c2') "=" /*
             */ _col(`c3') as res %`w2's e(est_cmd)
         if `"`e(dxtype)'"'!="" {
@@ -396,16 +404,18 @@ program Describe_newvars
      _return restore `rcurrent'
 end
 
-program _lnmor, rclass
-    syntax varlist(numeric fv) [, nowarn CONStant /*
+program Estimate, rclass
+    syntax varlist(numeric fv) [, nowarn CONStant NOTBAL TBAL /*
         */ kmax(numlist int max=1 >1 missingokay) /*
         */ dx DX2(passthru) delta DELTA2(passthru) CENTERed NORMalize /*
         */ EPSilon /* undocumented
-        */ at(passthru) atmax(int 50) /* 
+        */ at(passthru) atmax(int 50) /*
+        */ SUBSAMPle(str) /*
         */ noDOTs NOSE saveifuninmata /*
         */ IFGENerate(str) RIFgenerate(str) IFScaling(str) replace ]
-    if "`kmax'"=="" local kmax 100
-    if "`warn'"!="" local warn qui
+    if "`kmax'"==""   local kmax 100
+    if "`warn'"!=""   local warn qui
+    if "`notbal'"!="" local tbal notbal
     
     // ifgen
     if `"`rifgenerate'"'!="" {
@@ -470,9 +480,14 @@ program _lnmor, rclass
     _estimates hold `ecurrent', restore copy
     preserve
     qui keep if e(sample)
+    if `"`subsample'"'!="" {
+        tempvar subuse
+        _set_subsamp `subuse' `subsample'
+    }
+    else local subuse
     
     // weights
-    tempname sum_w
+    tempname sum_w0 sum_w
     local weight `"`e(wtype)'"'
     local exp    `"`e(wexp)'"'
     if "`weight'"!="" {
@@ -485,22 +500,39 @@ program _lnmor, rclass
         }
         local awgt "[aw=`wvar']"
         su `wvar', meanonly
-        local N        = r(N)
-        scalar `sum_w' = r(sum)
+        local N0        = cond("`weight'"=="fweight", r(sum), r(N))
+        scalar `sum_w0' = r(sum)
     }
     else {
         qui count
-        local N        = r(N)
-        scalar `sum_w' = r(N)
+        local N0        = r(N)
+        scalar `sum_w0' = r(N)
     }
-    if `N'!=`est_N' {
+    if `N0'!=`est_N' {
         di as error "something is wrong; inconsistent estimation sample"
         exit 498
     }
+    if "`subuse'"!="" {
+        if "`weight'"!="" {
+            su `wvar' if `subuse', meanonly
+            local N        = cond("`weight'"=="fweight", r(sum), r(N))
+            scalar `sum_w' = r(sum)
+        }
+        else {
+            qui count if `subuse'
+            local N        = r(N)
+            scalar `sum_w' = r(N)
+        }
+    }
+    else {
+        local N          `N0'
+        scalar `sum_w' = `sum_w0'
+    }
+    if `N'==0 error 2000
     
     // process varlist
-    fvexpand `varlist'
-    _collect_fvinfo `r(varlist)' // returns names nterms term# type# name# bn#
+    fvexpand `varlist' // (use full sample)
+    _collect_fvinfo `r(varlist)' // returns names nterms term# type# name# lvls# bn#
     local tmp: list dups names
     if `"`tmp'"'!="" {
         di as error "inconsistent varlist; duplicate variables not allowed"
@@ -514,15 +546,15 @@ program _lnmor, rclass
     }
     local ndx 0
     forv j = 1/`nterms' {
-        local isinmfv: list name`j' in mfv
+        local mfv`j': list name`j' in mfv
         if "`type`j''"=="factor" {
-            if !`isinmfv' {
+            if !`mfv`j'' {
                 `warn' di as txt "Warning: {bf:`name`j''} is a continuous" /*
                     */ " variable in the original model"
             }
             continue
         }
-        if `isinmfv' {
+        if `mfv`j'' {
             `warn' di as txt "Warning: {bf:`name`j''} is a factor" /*
                 */ " variable in the original model"
             continue
@@ -553,7 +585,8 @@ program _lnmor, rclass
     
     // at
     tempname AT
-    _parse_at `AT', `at' atmax(`atmax') mnames(`mnames') // returns AT K at
+    _parse_at `AT', `at' atmax(`atmax') mnames(`mnames') subuse(`subuse')
+        /* returns AT K at */
     local hasat = `"`at'"'!=""
     if `hasat' {
         local tmp: list at & names
@@ -566,7 +599,8 @@ program _lnmor, rclass
     // determine treatment levels
     forv j = 1/`nterms' {
         tempname levels`j'
-        mata: _get_levels("`j'") // fills in levels#; returns k# cname#
+        mata: _get_levels("`j'", "`subuse'")
+            /* fills in levels#; returns k# cname# */
     }
     
     // prepare VCE
@@ -590,8 +624,12 @@ program _lnmor, rclass
                 local IFs `IFs' `IF`j'_`k''
             }
         }
+        foreach v of local IFs {
+            qui gen double `v' = 0
+        }
         // parse ifgenerate()
         if `"`ifgenerate'"'!="" {
+            // expand stub*; confirm (new) varnames
             _parse_ifgenerate `"`ifgenerate'"' `:list sizeof IFs' `replace'
         }
         // obtain model IFs
@@ -625,22 +663,27 @@ program _lnmor, rclass
                 rename `cname`j'' `name`j''
             }
             if "`dots'"=="" {
-                //local kj = `k`j'' * `npred'
-                //_progress_info "`name`j''[`kj']" `lpos' `lsize'
                 _progress_info "`name`j''" `lpos' `lsize'
             }
-            local opts /*
+            local opts subuse(`subuse') /*
                 */ name(`name`j'') levels(`levels`j'') k(`k`j'') /*
                 */ wvar(`wvar') sum_w(`sum_w') ifs(`IF`j'_`k'') mifs(`mIFs') /*
                 */ mvars(`mvars') mcons(`mcons') estcmd(`est_cmd') /*
                 */ lsize(`lsize') lpos(`lpos') `dots'
-            if "`dxtype`j''"!="" {
-                _lnmor_dx, type(`dxtype`j'') delta(`delta2') `centered' /*
-                    */ `normalize' `opts'
+            if "`dxtype`j''"=="" {
+                // fractional logit
+                Estimate_fl, term(`term`j'') type(`type`j'') bn(`bn`j'') /*
+                    */ mfv(`mfv`j'') lvls(`lvls`j'') tbal(`tbal') `constant' /*
+                    */ `opts'
+            }
+            else if "`delta2'"=="" {
+                // derivatives
+                Estimate_dx, type(`dxtype`j'') `opts'
             }
             else {
-                __lnmor, term(`term`j'') type(`type`j'') bn(`bn`j'') /*
-                    */ `constant' `opts'
+                // discrete change effects
+                Estimate_dc, type(`dxtype`j'') delta(`delta2') `centered' /*
+                    */ `normalize' `opts'
             }
             matrix `b' = nullmat(`b'), r(b)
             if "`cname`j''"!="`name`j''" {
@@ -673,10 +716,10 @@ program _lnmor, rclass
     else if `vce' {
         qui total `IFs' [`weight'`exp'], `vceopt'
         if "`weight'"=="iweight" {
-            local tot_N = el(e(_N),1,1)
+            local N_tot = el(e(_N),1,1)
         }
-        else local tot_N = e(N)
-        if `N'!=`tot_N' {
+        else local N_tot = e(N)
+        if `N0'!=`N_tot' {
             di as error "something is wrong; inconsistent VCE sample"
             exit 498
         }
@@ -712,11 +755,17 @@ program _lnmor, rclass
     return local  cmd         "lnmor"
     return local  est_cmd     `"`est_cmd'"'
     return local  title       "Marginal (log) odds ratio"
-    return scalar N           = `N'
-    return scalar sum_w       = `sum_w'
+    return scalar N           = `N0'
+    return scalar sum_w       = `sum_w0'
+    if "`subuse'"!="" {
+        return scalar N_subsmp     = `N'
+        return scalar sum_w_subsmp = `sum_w'
+        return local subsample `"`subsample'"'
+    }
     return local  depvar      `"`e(depvar)'"'
     return local  wtype       `"`weight'"'
     return local  wexp        `"`exp'"'
+    return local  tbal        "`tbal'"
     return scalar nterms      = `nterms'
     if `ndx' {
         return local dxtype     "`dxtype'"
@@ -761,14 +810,14 @@ program _lnmor, rclass
             return scalar df_r    = `N_clust' - 1
         }
         else {
-            return scalar df_r = `N' - 1
+            return scalar df_r = `N0' - 1
         }
         return local vce     `"`evce'"'
         return local vcetype `"`vcetype'"'
         return scalar rank   = `rank'
     }
     else {
-        return scalar df_r = `N' - 1
+        return scalar df_r = `N0' - 1
     }
     if "`ifgenerate'"!="" {
         tempname b
@@ -780,10 +829,10 @@ program _lnmor, rclass
             gettoken IF IFs : IFs
             if "`IF'"=="" continue, break
             if "`iftype'"=="RIF" {
-                qui replace `IF' = `IF' + `b'[1,`j']/`sum_w'
+                qui replace `IF' = `IF' + `b'[1,`j']/`sum_w0'
             }
             if "`ifscaling'"=="mean" {
-                qui replace `IF'  = `IF' * `sum_w'
+                qui replace `IF'  = `IF' * `sum_w0'
             }
             gettoken nm coln : coln
             lab var `IF' "`iftype' of `nm'"
@@ -845,6 +894,16 @@ program _parse_dx_type
     if _rc==1 exit _rc
     if _rc    exit
     c_local dxtype `atmean' `average' `observed' `levels'
+end
+
+program _set_subsamp
+    gettoken subuse 0 : 0
+    syntax [varname(numeric default=none)] [if]
+    mark `subuse' `if'
+    if "`varlist'"!="" {
+        markout `subuse' `varlist'
+        qui replace `subuse' = 0 if `varlist'==0
+    }
 end
 
 program _progress_info
@@ -914,23 +973,26 @@ program _collect_fvinfo
          }
          if      "`Name'"!="`name'"   local next 1
          else if "`Type'"!="`type'"   local next 1
-         else local next 0
+         else                         local next 0
          if `next' {
              if `J' {
                  _collect_fvinfo_bn "`type'" "`term'" `bn'
                  c_local term`J' "`term'"
                  c_local type`J' "`type'"
                  c_local name`J' "`name'"
+                 c_local lvls`J' "`lvls'"
                  c_local bn`J'   `bn'
                  local names `names' `name'
              }
              local term
              local type
              local name
+             local lvls
              local bn 1
              local ++J
          }
          local term `term' `t'
+         local lvls `lvls' `r(level)'
          local type `Type'
          local name `Name'
          if r(base)==1 local bn 0
@@ -939,10 +1001,11 @@ program _collect_fvinfo
     c_local term`J' "`term'"
     c_local type`J' "`type'"
     c_local name`J' "`name'"
+    c_local lvls`J' "`lvls'"
     c_local bn`J'   `bn'
     local names `names' `name'
     c_local names   `names'
-    c_local nterms   `J'
+    c_local nterms  `J'
 end
 
 program _collect_fvinfo_interaction
@@ -980,7 +1043,7 @@ program _collect_fvinfo_bn
 end
 
 program _parse_at
-    syntax anything(name=AT), atmax(str) [ at(str) mnames(str) ]
+    syntax anything(name=AT), atmax(str) [ at(str) mnames(str) subuse(str) ]
     // no at() option
     if `"`at'"'=="" {
         c_local AT ""
@@ -1059,7 +1122,7 @@ program _parse_at
         exit 111
     }
     // create matrix of patterns
-    mata: _at_expand(`K', `J', `atmax')
+    mata: _at_expand(`K', `J', `atmax', "`subuse'")
     mat coln `AT' = `at'
     c_local at `at'
     c_local K `K'
@@ -1087,86 +1150,83 @@ program _parse_ifgenerate
     c_local ifgenerate `generate'
 end
 
-program __lnmor, rclass
+program _get_model_IF
+    args cons xvars IFs
+    tempname sc
+    qui predict double `sc', score
+    capt confirm matrix e(V_modelbased)
+    if _rc==1 exit _rc
+    if _rc local V V
+    else   local V V_modelbased
+    mata: _get_model_IF("e(`V')", "`sc'", `cons', st_local("xvars"), /*
+        */ st_local("IFs"))
+end
+
+program Estimate_fl, rclass
     syntax, term(str) type(str) name(str) bn(str) levels(str) sum_w(str) /*
-         */ k(str) estcmd(str) mcons(str) [ constant wvar(str) /*
-         */ ifs(str) mifs(str) mvars(str) lsize(str) lpos(str) nodots ]
+        */ k(str) estcmd(str) mcons(str) mfv(str) [ constant wvar(str) /*
+        */ ifs(str) mifs(str) mvars(str) subuse(str) lsize(str) lpos(str) /*
+        */ lvls(str) tbal(str) nodots ]
+    if "`subuse'"!="" local iff "if `subuse'"
     
-    // weights
-    if "`wvar'"!="" local wgt "[aw=`wvar']"
-    
-    // whether outcome model has constant (bn=1 only possible if type=factor)
+    // check whether outcome model has constant (bn=1 only possible if
+    // type=factor) and create additional tempvar for IF of constant, if
+    // needed
     if `bn' local nocons noconstant
-    
-    // create tempvars for IFs
     local vce = `"`ifs'"'!=""
     if `vce' {
         if "`nocons'`constant'"=="" {
             tempname IFcns
+            qui gen double `IFcns' = 0
             local ifs `ifs' `IFcns'
         }
-        foreach v of local ifs {
-            qui gen double `v' = 0
-        }
     }
-
-    // run
-    tempname l pbar
-    tempvar name0 name1 name2 p w PS
-    rename `name' `name0'
-    if `vce' {
-        tempname Y touse
-        qui gen double `Y' = .
-        qui gen byte `touse' = .
-    }
-    qui gen double `p' = .
-    qui gen double `w' = .
-    qui gen double `name' = .
-    qui gen double `name1' = .
-    forv i = 1/`k' {
-        scalar `l' = `levels'[`i',1]
-        qui replace `name' = `l'
-        qui predict double `PS', pr
-        su `PS' `wgt', meanonly
-        scalar `pbar' = r(mean)
-        qui replace `p'     = `pbar' in `i'
-        qui replace `w'     = `levels'[`i',2] in `i'
-        qui replace `name1' = `l' in `i'
-        if `vce' {
-            qui replace `touse' = `name0'==`l'
-            qui replace `Y' = `pbar' if `touse'
-            mata: __lnmor_update_IF()
-        }
-        drop `PS'
-        if "`dots'"=="" _progress_info "." `lpos' `lsize'
-    }
-    drop `name'
-    c_local lpos `lpos'
     
-    // result
-    rename `name1' `name'
+    // whether to use balanced design or not
+    if "`tbal'"=="" & "`type'"=="factor" {
+        // apply tbal if fractional logit is saturated, i.e. if -term- 
+        // covers all existing treatment levels
+        mata: st_local("tmp", invtokens(strofreal(st_matrix("`levels'")[,1]')))
+        if `:list tmp in lvls' local tbal tbal
+    }
+    
+    // compute predictions and prepare IFs
+    tempvar name0 vtmp
+    rename `name' `name0'
+    qui gen double `name' = .
+    tempvar P W T
+    qui gen double `P' = .
+    qui gen double `W' = .
+    qui gen double `T' = .
+    mata: Estimate_fl(`k', `vce', "`subuse'")
+    drop `name'
+    
+    // apply fractional logit and finalize IFs
+    rename `T' `name'
     tempname ecurrent
     _estimates hold `ecurrent', restore
-    su `p' in 1/`k', meanonly
+    su `P' in 1/`k', meanonly
     local hasvar = r(min)!=r(max)
     if `hasvar' {
-        qui fracreg logit `p' `term' [iw=`w'] in 1/`k', `nocons'
+        capt _nobs `P' [iw=`W'] in 1/`k', min(2)
+        if _rc {
+            di _n as err "cannot apply fractional logit; predictions for at"/*
+                */ " least two (positively weighted) levels required"
+            exit _rc
+        }
+        qui fracreg logit `P' `term' [iw=`W'] in 1/`k', `nocons'
+        if `vce' {
+            qui predict double `vtmp' in 1/`k'
+            mata: _IF_fl_finalize(`k', "`nocons'"=="", "`subuse'")
+        }
+    }
+    else if `vce' {
+        foreach IF of local ifs {
+            qui replace `IF' = 0
+        }
     }
     drop `name'
     rename `name0' `name'
-
-    // generate IFs
-    if `vce' {
-        if `hasvar' {
-            qui predict double `PS'
-            mata: __lnmor_finalize_IF()
-        }
-        else {
-            foreach IF of local ifs {
-                qui replace `IF' = 0
-            }
-        }
-    }
     
     // returns
     tempname b
@@ -1186,214 +1246,96 @@ program __lnmor, rclass
         mat coln `b' = `tmp'
     }
     return matrix b = `b'
+    c_local lpos `lpos'
 end
 
-program _lnmor_dx, rclass
+program Estimate_dx, rclass
     syntax, type(str) name(str) levels(str) sum_w(str) k(str) /*
-        */ estcmd(passthru) mcons(passthru) [ delta(passthru) centered /*
-        */ NORMALIZE wvar(passthru) ifs(str) mifs(passthru) mvars(passthru) /*
-        */ lsize(passthru) lpos(str) nodots ]
+        */ estcmd(str) mcons(str) [ wvar(str) ifs(str) /*
+        */ mifs(str) mvars(str) subuse(str) lsize(str) lpos(str) nodots ]
+    if "`subuse'"!="" local iff "if `subuse'"
     
-    // helper vector for deriviatives of the linear predictor
+    // helper vector for derivative of the linear predictor
+    tempname dzb dz
+    matrix `dzb' = e(b)
+    _ms_dzb_dx `name', matrix(`dzb') // undocumented utility of -margins-
+    matrix `dzb' = r(b)
+    
+    // helper vector for double derivative of the linear predictor  IF of mean
     local vce = `"`ifs'"'!=""
-    if "`delta'"=="" | (`vce' & "`type'"=="atmean") {
-        tempname dzb
-        matrix `dzb' = e(b)
+    if `vce' & "`type'"=="atmean" {
+        tempname ddzb ddz
         _ms_dzb_dx `name', matrix(`dzb') // undocumented utility of -margins-
-        matrix `dzb' = r(b)
+        matrix `ddzb' = r(b)
+        tempvar muIF 
+        qui gen double `muIF' = (`name' - `levels'[1,1]) / `sum_w' `iff'
     }
     
-    // common options
-    local options name(`name') levels(`levels') sum_w(`sum_w') dzb(`dzb') /*
-        */  `wvar' `delta' `centered' `normalize' `estcmd' `mcons' `mifs' /*
-        */  `mvars' `lsize' `dots'
-    
-    // average of level-specific dx
-    if "`type'"=="average" {
-        if `vce' {
-            qui gen double `ifs' = 0
-            tempname IF
-        }
-        tempname b p
-        mat `b' = J(1, 1, 0)
-        mat `p' = `levels'[1...,2] / `sum_w'
-        forv i = 1/`k' {
-            __lnmor_dx, i(`i') lpos(`lpos') ifvar(`IF') `options'
-            mat `b' = `b' + r(b) * `p'[`i',1]
-            if `vce' {
-                qui replace `ifs' = `ifs' + (`p'[`i',1] * `IF' ///
-                    + r(b) * ((`name'==`levels'[`i',1]) - `p'[`i',1]) / `sum_w')
-                drop `IF'
-            }
-        }
-        mat coln `b' = `name'
-        return matrix b = `b'
-        c_local lpos `lpos'
-        exit
-    }
-    // dx at mean
-    if "`type'"=="atmean" {
-        if `vce' {
-            tempvar muIF // IF of mean
-            qui gen double `muIF' = (`name' - `levels'[1,1]) / `sum_w'
-        }
-        tempname b
-        __lnmor_dx, i(1) lpos(`lpos') ifvar(`ifs') `options'
-        mat `b' = r(b)
-        mat coln `b' = `name'
-        return matrix b = `b'
-        c_local lpos `lpos'
-        exit
-    }
-    // dx at observed values
-    if "`type'"=="observed" {
-        tempname b
-        __lnmor_dx, i(1) lpos(`lpos') ifvar(`ifs') `options'
-        mat `b' = r(b)
-        mat coln `b' = `name'
-        return matrix b = `b'
-        c_local lpos `lpos'
-        exit
-    }
-    // dx at levels
+    // compute estimates and IFs
     tempname b
-    mat `b' = J(1, `k', .)
-    local coln
-    forv i = 1/`k' {
-        local coln `coln' `name'@l`i'
-        gettoken IF ifs : ifs
-        __lnmor_dx, i(`i') ifvar(`IF') lpos(`lpos') `options'
-        mat `b'[1,`i'] = r(b)
-    }
-    mat coln `b' = `coln'
+    tempvar name0 vtmp
+    rename `name' `name0'
+    qui gen double `name' = .
+    mata: Estimate_dx(`k', `vce', "`subuse'")
+    drop `name'
+    rename `name0' `name'
+    
+    // returns
     return matrix b = `b'
     c_local lpos `lpos'
 end
 
-program __lnmor_dx, rclass
-    syntax, name(str) levels(str) sum_w(str) i(str) estcmd(str) mcons(str) /*
-         */ [ delta(str) centered NORMALIZE wvar(str) ifvar(str) mifs(str) /*
-         */ mvars(str) muif(str) dzb(str) lsize(str) lpos(str) nodots ]
+program Estimate_dc, rclass
+    syntax, delta(str) type(str) name(str) levels(str) sum_w(str) k(str) /*
+        */ estcmd(str) mcons(str) [ centered NORMALIZE wvar(str) ifs(str) /*
+        */ mifs(str) mvars(str) subuse(str) lsize(str) lpos(str) nodots ]
+    if "`subuse'"!="" local iff "if `subuse'"
     
-    // weights
-    if "`wvar'"!="" local wgt "[aw=`wvar']"
-    
-    // create tempvar for IF
-    local vce = `"`ifvar'"'!=""
-    if `vce' {
-        qui gen double `ifvar' = 0
+    // helper vector for derivative of the linear predictor and IF of mean
+    local vce = `"`ifs'"'!=""
+    if `vce' & "`type'"=="atmean" {
+        tempname dzb dz
+        matrix `dzb' = e(b)
+        _ms_dzb_dx `name', matrix(`dzb') // undocumented utility of -margins-
+        matrix `dzb' = r(b)
+        tempvar muIF // IF of mean
+        qui gen double `muIF' = (`name' - `levels'[1,1]) / `sum_w' `iff'
     }
     
-    // run
-    tempname b l
-    scalar `l' = `levels'[`i',1]
-    if "`delta'"=="" {
-        if "`muif'"!="" {
-            tempname ddzb
-            _ms_dzb_dx `name', matrix(`dzb')
-            matrix `ddzb' = r(b)
-        }
-        if `l'<. {
-            tempvar name0
-            rename `name' `name0'
-            qui gen double `name' = `l'
-        }
-        tempvar Q PS dz
-        tempname qbar pbar
-        qui matrix score double `dz' = `dzb'
-        qui predict double `PS', pr
-        if "`estcmd'"=="probit" qui gen double `Q' = normalden(invnormal(`PS')) * `dz'
-        else                    qui gen double `Q' = `PS' * (1-`PS') * `dz'
-        su `Q' `wgt', meanonly
-        scalar `qbar' = r(mean)
-        su `PS' `wgt', meanonly
-        scalar `pbar' = r(mean)
-        if `vce' {
-            if "`muif'"!="" {
-                tempvar  ddz
-                qui matrix score double `ddz' = `ddzb'
-            }
-            mata: __lnmor_dx_IF()
-        }
-        scalar `b' = `qbar' / (`pbar' * (1 - `pbar'))
-        if "`dots'"=="" _progress_info "." `lpos' `lsize'
-        if `l'<. {
-            drop `name'
-            rename `name0' `name'
-        }
-    }
-    else {
-        if "`delta'"=="0"      local np 1
-        else                   local np 2
-        if "`normalize'"==""   local h 1
-        else if `np'==1        local h 1
-        else                   local h `delta'
-        if `np'==1 {
-            local eps1
-            local eps2
-        }
-        else if "`centered'"!="" {
-            local eps1 - `delta'/2
-            local eps2 + `delta'/2
-        }
-        else {
-            local eps1
-            local eps2 + `delta'
-        }
-        if "`muif'"!="" tempvar dz
-        tempname p1 p2
-        tempvar name0 PS
-        rename `name' `name0'
-        qui gen double `name' = .
-        if `l'>=. local lev `name0'
-        else      local lev `l'
-        forv j = 1/`np' {
-            qui replace `name' = `lev' `eps`j''
-            qui predict double `PS', pr
-            su `PS' `wgt', meanonly
-            scalar `p`j'' = r(mean)
-            local pbar `p`j''
-            if `vce' {
-                if "`muif'"!="" qui matrix score double `dz' = `dzb'
-                mata: __lnmor_dc_IF(`h')
-                if "`muif'"!="" drop `dz'
-            }
-            drop `PS'
-            if "`dots'"=="" _progress_info "." `lpos' `lsize'
-        }
-        if `np'==1 scalar `b' = logit(`p1')
-        else       scalar `b' = (logit(`p2') - logit(`p1')) / `h'
-        drop `name'
-        rename `name0' `name'
-    }
+    // compute estimates and IFs
+    tempname b
+    tempvar name0 vtmp
+    rename `name' `name0'
+    qui gen double `name' = .
+    mata: Estimate_dc(`k', `vce', "`subuse'")
+    drop `name'
+    rename `name0' `name'
     
     // returns
-    return scalar b = `b'
+    return matrix b = `b'
     c_local lpos `lpos'
 end
 
-program _get_model_IF
-    args cons xvars IFs
-    tempname sc
-    qui predict double `sc', score
-    capt confirm matrix e(V_modelbased)
-    if _rc==1 exit _rc
-    if _rc local V V
-    else   local V V_modelbased
-    mata: _get_model_IF("e(`V')", "`sc'", `cons', st_local("xvars"), /*
-        */ st_local("IFs"))
-end
-
 version 15
+// string
+local SS string scalar
+local SR string rowvector
+local SC string colvector
+local SM string matrix
+// real
+local RS real scalar
+local RC real colvector
+local RR real rowvector
+local RM real matrix
 mata:
 mata set matastrict on
 
-void _at_expand(real scalar K0, real scalar J, real scalar atmax)
+void _at_expand(`RS' K0, `RS' J, `RS' atmax, `SS' subuse)
 {
-    real scalar       j, k, K, K1, R
-    string rowvector  at
-    real colvector    l
-    real matrix       AT
+    `RS' j, k, K, K1, R
+    `SR' at
+    `RC' l
+    `RM' AT
     pointer rowvector L
     
     // collect levels of no levels specified
@@ -1402,7 +1344,7 @@ void _at_expand(real scalar K0, real scalar J, real scalar atmax)
         L = J(1,J,NULL)
         K1 = 1
         for (j=1; j<=J; j++) {
-            L[j] = &(mm_unique(st_data(., at[j])))
+            L[j] = &(mm_unique(st_data(., at[j], subuse)))
             K1 = K1 * rows(*L[j])
             if (hasmissing(*L[j])) {
                 stata(`"di as err "something is wrong; {bf:"' + at[j] +
@@ -1433,12 +1375,12 @@ void _at_expand(real scalar K0, real scalar J, real scalar atmax)
     st_matrixrowstripe(st_local("AT"), (J(K1,1,""), strofreal(1::K1)))
 }
 
-void _get_levels(string scalar j)
+void _get_levels(`SS' j, `SS' subuse)
 {
-    string scalar    Name, vtype, dxtype, dxlevels
-    real scalar      k, kmax
-    real colvector   X, w, p, a, b
-    real matrix      L
+    `SS' Name, vtype, dxtype, dxlevels
+    `RS' k, kmax
+    `RC' X, w, p, a, b
+    `RM' L
     
     // setup
     Name     = st_local("name"+j)
@@ -1458,9 +1400,12 @@ void _get_levels(string scalar j)
         k = 1
     }
     else {
+        // in case of subsamp(): use all data, but set weights of obs outside
+        // subsamp to zero
         X = st_data(., Name)
         if (st_local("wvar")!="") w = st_data(., st_local("wvar"))
         else                      w = 1
+        if (subuse!="")           w = w :* st_data(., subuse)
         if (dxtype=="atmean") {
             L = (quadsum(w==1 ? X : w:*X)/st_numscalar(st_local("sum_w")), .)
             k = 1
@@ -1483,7 +1428,7 @@ void _get_levels(string scalar j)
                 k = rows(a)
                 printf("; using %g binned levels)\n", k)
                 Name = st_tempname(1)
-                st_store(p, st_addvar("double", Name), X)
+                st_store(., st_addvar("double", Name), X[invorder(p)])
             }
             L = X[a]
             b = selectindex(_mm_unique_tag(X, 1))
@@ -1502,10 +1447,10 @@ void _get_levels(string scalar j)
     st_local("cname"+j, Name) // name of (possibly binned) variable
 }
 
-void _get_levels_bin(real colvector X, real colvector w, real scalar k)
+void _get_levels_bin(`RC' X, `RC' w, `RS' k)
 {
-    real scalar    i, j, qj, a, b, e
-    real colvector q
+    `RS' i, j, qj, a, b, e
+    `RC' q, ww
     
     i = rows(X)
     a = X[1]; b = X[i]
@@ -1521,20 +1466,25 @@ void _get_levels_bin(real colvector X, real colvector w, real scalar k)
             if (i==0) break
         }
         if (a>b) continue // no observations in bin
-        X[|a\b|] = J(b-a+1, 1, w==1 ? mean(X[|a\b|]) : mean(X[|a\b|], w[|a\b|]))
+        if (w==1) X[|a\b|] = J(b-a+1, 1, mean(X[|a\b|]))
+        else {
+            ww = w[|a\b|]
+            if (sum(ww)==0) X[|a\b|] = J(b-a+1, 1, mean(X[|a\b|]))
+            else            X[|a\b|] = J(b-a+1, 1, mean(X[|a\b|], ww))
+        }
     }
 }
 
-void _mktmpnames(string scalar nm, real scalar k)
+void _mktmpnames(`SS' nm, `RS' k)
 {
     st_local(nm, invtokens(st_tempname(k)))
 }
 
-void _get_model_IF(string scalar V, string scalar score, real scalar cons,
-    string scalar xvars, string scalar IFs)
+void _get_model_IF(`SS' V, `SS' score, `RS' cons,
+    `SS' xvars, `SS' IFs)
 {
-    real colvector   sc
-    real matrix      X, IF
+    `RC' sc
+    `RM' X, IF
     
     st_view(sc=., ., score)
     st_view(X=., ., xvars)
@@ -1542,11 +1492,11 @@ void _get_model_IF(string scalar V, string scalar score, real scalar cons,
     IF[.,.] = (sc:*X, J(1, cons, sc)) * st_matrix(V)'
 }
 
-void _lnmor_restore(real scalar ifgen)
+void _lnmor_restore(`RS' ifgen)
 {
-    string scalar    touse
-    string colvector IFs
-    real matrix      IF
+    `SS' touse
+    `SR' IFs
+    `RM' IF
     
     if (ifgen) {
         IFs = tokens(st_local("IFs"))
@@ -1561,37 +1511,288 @@ void _lnmor_restore(real scalar ifgen)
     }
 }
 
-void __lnmor_update_IF()
+void Estimate_fl(`RS' k, `RS' vce, `SS' subuse)
 {
-    real matrix IF
+    `RS' i, pbar, dots, probit
+    `SS' levls
+    `RC' b, w, p
+    `RM' L
+    // for vce
+    `SS' mvars
+    `RS' W, cons, mcons, mfv
+    `RC' dp, S
+    `RM' X, mIF, IF
     
-    st_view(IF=., ., st_local("ifs"))
-    IF[.,.] = IF + __lnmor_IF_p(0) * __lnmor_IF_delta()
+    // setup
+    dots   = st_local("dots")==""
+    levls  = st_local("levels")
+    L      = st_matrix(levls)
+    probit = st_local("estcmd")=="probit" // default: logit
+    // balanced treatment levels
+    W = st_numscalar(st_local("sum_w"))
+    if (st_local("tbal")=="tbal") L[,2] = J(k, 1, W/k)
+    // weights
+    w = st_local("wvar")!="" ? st_data(., st_local("wvar"), subuse) : 1
+    // prepare VCE
+    if (vce) {
+        cons  = st_local("nocons")==""
+        mcons = st_local("mcons")!="0"
+        mvars = st_local("mvars")
+        mfv   = st_local("mfv")=="1" // tvar is factor variable in model
+        if (!mfv) st_view(X=., ., mvars, subuse)
+        st_view(mIF=., ., st_local("mifs"))
+        if (subuse!="") S = selectindex(st_data(.,subuse)) // subsample index
+        else            S = .
+        st_view(IF=., ., st_local("ifs"))
+    }
+    // generate predictions
+    b = J(k, 1, .)
+    for (i=1; i<=k; i++) {
+        _set_tvar(sprintf("%s[%g,1]", levls, i), "")
+        p = _get_ps(subuse)
+        b[i] = pbar = mean(p, w)
+        if (vce) {
+            if (probit) dp = normalden(invnormal(p))
+            else        dp = p :* (1 :- p)
+            if (w!=1)   dp = w :* dp
+            if (mfv) st_view(X=., ., mvars, subuse) /* modifications of factor
+                variables do not propagate into a view; need to rebuild the
+                view in each round */
+            IF[.,.] = IF +
+                _IF_p(S, pbar, p, dp, X, mIF, mcons, ., .z) / W *
+                (L[i,2] * (st_data(1, st_local("term")), J(1,cons,1)))
+        }
+        _progress_dot(dots)
+    }
+    // save results for fractional logit
+    st_store((1,k), (st_local("P"), st_local("T"), st_local("W")), (b, L))
 }
 
-real rowvector __lnmor_IF_delta()
+void Estimate_dx(`RS' k, `RS' vce, `SS' subuse)
 {
-    real scalar    touse, cons
-    real rowvector delta
-    real colvector w
-    real matrix    X
+    `RS' i, pbar, qbar, dots, probit
+    `SS' dtype, tvar, levls, at
+    `RC' b, w, p, q, dz
+    // for vce
+    `SR' dzbx
+    `RS' W, mcons
+    `RC' dp, ddz, muIF, S
+    `RR' dzb, dzbp 
+    `RM' X, dzbX, mIF, IF
     
-    st_varrename(st_local("name"), st_local("name2"))
-    st_varrename(st_local("name0"), st_local("name"))
-    cons = st_local("nocons")==""
-    touse = st_varindex(st_local("touse"))
-    w = st_local("wvar")!="" ? st_data(., st_local("wvar"), touse) : 1
-    st_view(X=., ., st_local("term"), touse)
-    delta = __lnmor_colsum(w, X, cons)
-    st_varrename(st_local("name"), st_local("name0"))
-    st_varrename(st_local("name2"), st_local("name"))
-    return(delta)
+    // setup
+    dots   = st_local("dots")==""
+    dtype  = st_local("type") // average, atmean, observed, levels
+    tvar   = st_local("name0")
+    levls  = st_local("levels")
+    probit = st_local("estcmd")=="probit" // default: logit
+    // weights
+    w = st_local("wvar")!="" ? st_data(., st_local("wvar"), subuse) : 1
+    // prepare VCE
+    if (vce) {
+        W = st_numscalar(st_local("sum_w"))
+        st_view(mIF=., ., st_local("mifs"))
+        mcons = st_local("mcons")!="0"
+        st_view(X=., ., st_local("mvars"), subuse) /* since Estimate_dx() is
+            not applied to factor variables, building the view only once should
+            be ok */
+        dzb  = editmissing(st_matrix(st_local("dzb")) :/ st_matrix("e(b)"), 0)
+        dzbx = st_matrixcolstripe(st_local("dzb"))[,2]'
+        dzbp = _get_dzbp(dzb, dzbx) // modifies dzbx
+        if (any(dzbp)) st_view(dzbX=., ., select(dzbx, dzbp), subuse)
+        if (dtype=="atmean") st_view(muIF=., ., st_local("muIF"), subuse)
+        else                 muIF = .z
+        if (subuse!="") S = selectindex(st_data(.,subuse)) // subsample index
+        else            S = .
+        if (dtype=="average") IF = J(st_nobs(), k, 0)
+        else                  st_view(IF=., ., st_local("ifs"))
+    }
+    // generate predictions
+    b = J(k, 1, .)
+    for (i=1; i<=k; i++) {
+        if (dtype=="observed") at = tvar
+        else                   at = sprintf("%s[%g,1]", levls, i)
+        _set_tvar(at, "")
+        p = _get_ps(subuse)
+        pbar = mean(p, w)
+        dz = _get_dz(subuse)
+        if (probit) q = normalden(invnormal(p)) :* dz
+        else        q = p :* (1 :- p) :* dz
+        qbar = mean(q, w)
+        if (vce) {
+            if (dtype=="atmean") ddz = _get_ddz(subuse)
+            if (probit) dp = normalden(invnormal(p))
+            else        dp = p :* (1 :- p)
+            if (w!=1)   dp = w :* dp
+            IF[,i] =
+                (_IF_q(S, p, dp, X, mIF, mcons, dz, muIF, probit, qbar, q, ddz,
+                    dzb, dzbp, dzbX)
+                + (qbar*(2*pbar-1)/(pbar*(1-pbar))) *
+                    _IF_p(S, pbar, p, dp, X, mIF, mcons, dz, muIF)) / 
+                (W * pbar * (1 - pbar))
+        }
+        b[i] = qbar / (pbar * (1 - pbar))
+        _progress_dot(dots)
+    }
+    // take average
+    if (dtype=="average") b = _dx_avg(b, levls, vce, W, IF, tvar, subuse, S)
+    // return
+    st_matrix(st_local("b"), b')
+    _set_colstripe(st_local("b"), dtype, k)
 }
 
-real rowvector __lnmor_colsum(real colvector w, real matrix X, real scalar cons)
+void Estimate_dc(`RS' k, `RS' vce, `SS' subuse)
 {
-    real scalar    j, k
-    real rowvector sum
+    `RS' i, j, J, h, pbar, dots, centr, norm, d0, probit
+    `SS' dtype, tvar, levls, delta, at, eps
+    `RC' b, w, p
+    // for vce
+    `RS' W, D, mcons
+    `RC' dp, dz, muIF, S
+    `RM' X, mIF, IF
+    
+    // setup
+    dots   = st_local("dots")==""
+    dtype  = st_local("type") // average, atmean, observed, levels
+    tvar   = st_local("name0")
+    levls  = st_local("levels")
+    delta  = st_local("delta")
+    centr  = st_local("centered")!=""
+    norm   = st_local("normalize")!=""
+    d0     = delta=="0" // estimate levels, not effects
+    probit = st_local("estcmd")=="probit" // default: logit
+    // weights
+    w = st_local("wvar")!="" ? st_data(., st_local("wvar"), subuse) : 1
+    // prepare VCE
+    if (vce) {
+        W = st_numscalar(st_local("sum_w"))
+        st_view(mIF=., ., st_local("mifs"))
+        mcons = st_local("mcons")!="0"
+        st_view(X=., ., st_local("mvars"), subuse) /* since Estimate_dc() is
+            not applied to factor variables, building the view only once should
+            be ok */
+        if (dtype=="atmean") st_view(muIF=., ., st_local("muIF"), subuse)
+        else                 muIF = .z
+        if (subuse!="") S = selectindex(st_data(.,subuse)) // subsample index
+        else            S = .
+        if (dtype=="average") IF = J(st_nobs(), k, 0)
+        else                  st_view(IF=., ., st_local("ifs"))
+    }
+    // normalization
+    h = (d0 | !norm ? 1 : strtoreal(delta))
+    // generate predictions
+    b = J(k, 1, .)
+    J = 2 - d0 
+    for (i=1; i<=k; i++) {
+        if (dtype=="observed") at = tvar
+        else                   at = sprintf("%s[%g,1]", levls, i)
+        for (j = J; j; j--) {
+            if (d0) eps = "" // 
+            else {
+                if (centr) {
+                    if (j==1) eps = " - " + delta + "/2"
+                    else      eps = " + " + delta + "/2"
+                }
+                else {
+                    if (j==1) eps = ""
+                    else      eps = " + " + delta
+                }
+            }
+            _set_tvar(at, eps)
+            p = _get_ps(subuse)
+            pbar = mean(p, w)
+            if (vce) {
+                if (dtype=="atmean") dz = _get_dz(subuse)
+                if (probit) dp = normalden(invnormal(p))
+                else        dp = p :* (1 :- p)
+                if (w!=1)   dp = w :* dp
+                D = W * h * pbar * (1 - pbar)
+                if (d0 | j!=1) 
+                    IF[,i] = _IF_p(S, pbar, p, dp, X, mIF, mcons, dz, muIF) / D
+                else IF[,i] = 
+                    IF[,i] - _IF_p(S, pbar, p, dp, X, mIF, mcons, dz, muIF) / D
+            }
+            if (j==J) b[i] = logit(pbar) // level only or upper estimate
+            else      b[i] = quadsum((b[i], -logit(pbar))) / h // lower estimate
+            _progress_dot(dots)
+        }
+    }
+    // take average
+    if (dtype=="average") b = _dx_avg(b, levls, vce, W, IF, tvar, subuse, S)
+    // return
+    st_matrix(st_local("b"), b')
+    _set_colstripe(st_local("b"), dtype, k)
+}
+
+void _set_tvar(`SS' at, `SS' eps)
+{
+    stata("replace \`name' = " + at + eps /*+ " \`iff'"*/, 1)
+}
+
+`RC' _get_ps(`SS' subuse)
+{
+    return(_get_vtmp("predict double \`vtmp' \`iff', pr", subuse))
+}
+
+`RC' _get_dz(`SS' subuse)
+{
+    return(_get_vtmp("matrix score double \`vtmp' = \`dzb' \`iff'", subuse))
+}
+
+`RC' _get_ddz(`SS' subuse)
+{
+    return(_get_vtmp("matrix score double \`vtmp' = \`ddzb' \`iff'", subuse))
+}
+
+`RC' _get_vtmp(`SS' cmd, `SS' subuse)
+{
+    `RC' v
+    
+    stata(cmd, 1)
+    v = st_data(., st_local("vtmp"), subuse)
+    stata("drop \`vtmp'")
+    return(v)
+}
+
+void _progress_dot(`RS' dots)
+{
+    if (!dots) return
+    stata("_progress_info . \`lpos' \`lsize'")
+}
+
+void _set_colstripe(`SS' b, `SS' dtype, `RS' k)
+{
+    `SM' cstripe
+    
+    if (dtype!="levels") cstripe = "", st_local("name")
+    else cstripe = J(k,1,""), (st_local("name") + "@l") :+ strofreal(1::k)
+    st_matrixcolstripe(b, cstripe)
+}
+
+`RC' _IF_p(`RC' S, `RS' pbar, `RC' p, `RC' dp, `RM' X, `RM' mIF, `RS' mcons,
+    `RC' dz, `RC' muIF)
+{
+    `RR' delta
+    `RC' IF
+    
+    delta = _colsum(dp, X, mcons)
+    if (S==.) {
+        // full sample; no mean estimate
+        if (muIF==.z) return((p :- pbar) + mIF * delta')
+        // full sample; with mean estimate
+        return((p :- pbar) + mIF * delta' + muIF * quadcolsum(dp :* dz))
+    }
+    // subsample
+    IF = mIF * delta'
+    IF[S,] = IF[S,] + (p :- pbar)
+    if (muIF!=.z) IF[S,] = IF[S,] + muIF * quadcolsum(dp :* dz)
+    return(IF)
+}
+
+`RR' _colsum(`RC' w, `RM' X, `RS' cons)
+{
+    `RS' j, k
+    `RR' sum
     
     k = cols(X)
     j = k + cons
@@ -1605,84 +1806,57 @@ real rowvector __lnmor_colsum(real colvector w, real matrix X, real scalar cons)
     return(sum)
 }
 
-real matrix __lnmor_IF_p(real scalar hasq)
+`RC' _IF_q(`RC' S, `RC' p, `RC' dp, `RM' X, `RM' mIF, `RS' mcons, `RC' dz,
+    `RC' muIF, `RC' probit, `RS' qbar, `RC' q, `RC' ddz, `RR' dzb, `RR' dzbp,
+    `RM' dzbX)
 {
-    real scalar    cons, pbar
-    real colvector p, dp, dz, muIF
-    real matrix    IF, X, mIF
+    `RR' delta
+    `RC' dq, IF
     
-    cons = strtoreal(st_local("mcons"))
-    pbar = st_numscalar(st_local("pbar"))
-    p    = st_data(., st_local("PS"))
-    if (st_local("estcmd")=="probit") dp = normalden(invnormal(p))
-    else                              dp = p :* (1 :- p)
-    if (st_local("wvar")!="") dp = st_data(., st_local("wvar")) :* dp
-    st_view(X=., ., st_local("mvars"))
-    st_view(mIF=., ., st_local("mifs"))
-    if (st_local("dz")!="") dz = st_data(., st_local("dz"))
-    IF = (p :- pbar) + mIF * __lnmor_colsum(dp, X, cons)'
-    if (st_local("muif")!="") {
-        // dx(atmean) correction
-        muIF = st_data(., st_local("muif"))
-        IF = IF + muIF * quadcolsum(dp :* dz)
+    if (probit) dq = -invnormal(p) :* dz
+    else        dq = (1 :- 2*p)    :* dz
+    delta = _colsum_q(dp, X, mcons, dq, dzb, dzbp, dzbX)
+    if (S==.) {
+        // full sample; no mean estimate
+        if (muIF==.z) return((q :- qbar) + mIF * delta')
+        // full sample; with mean estimate
+        return((q :- qbar) + mIF * delta'
+            + muIF * quadcolsum(dp :* (dq :* dz :+ ddz)))
     }
-    if (hasq) IF = IF, __lnmor_IF_q(p, dp, X, mIF, cons, dz, muIF)
-    return(IF / st_numscalar(st_local("sum_w")))
-}
-
-real matrix __lnmor_IF_q(real colvector p, real colvector dp, real matrix X,
-    real matrix mIF, real scalar cons, real colvector dz, real colvector muIF)
-{
-    real scalar    qbar
-    real colvector q, dq, IF
-
-    qbar = st_numscalar(st_local("qbar"))
-    q    = st_data(., st_local("Q"))
-    if (st_local("estcmd")=="probit") dq = -invnormal(p) :* dz
-    else                              dq = (1 :- 2*p)    :* dz
-    IF = (q :- qbar) + mIF * __lnmor_IF_q_colsum(dp, dq, X, cons)'
-    if (st_local("muif")!="") {
-        IF = IF + muIF * 
-            quadcolsum(dp :* (dq :* dz :+ st_data(., st_local("ddz"))))         // or should it just be "dq", not "dq :* dz"
-    }
+    // subsample
+    IF = mIF * delta'
+    IF[S,] = IF[S,] + (q :- qbar)
+    if (muIF!=.z) IF[S,] = IF[S,] + muIF * quadcolsum(dp :* (dq :* dz :+ ddz))
     return(IF)
 }
 
-real rowvector __lnmor_IF_q_colsum(real colvector dp, real colvector dq,
-    real matrix X, real scalar cons)
+`RR' _colsum_q(`RC' w, `RM' X, `RS' cons, `RC' dq, `RR' dzb, `RR' dzbp,
+    `RM' dzbX)
 {
-    real scalar      j, k
-    real colvector   dpdq
-    real rowvector   sum, dzb, dzbp
-    real matrix      dzbX
+    `RS' j, k
+    `RC' wdq
+    `RR' sum
     
-    // prepare info from dzb
-    dzb  = editmissing(st_matrix(st_local("dzb")) :/ st_matrix("e(b)"), 0)
-    dzbp = __lnmor_IF_q_dzbX(dzbX=., dzb, st_local("dzb"))
-    // compute components
     k = cols(X)
     j = k + cons
     sum = J(1, j, .)
-    dpdq = dp :* dq
-    if (j>k) sum[j--] = quadsum(dpdq)
+    wdq = w :* dq
+    if (j>k) sum[j--] = quadsum(wdq)
     k = cols(dzbX)
     for (;j;j--) {
-        if (dzbp[j])     sum[j] = quadsum(dp:*(dq:*X[,j] :+ dzb[j]:*dzbX[,k--]))
-        else if (dzb[j]) sum[j] = quadsum(dp:*(dq:*X[,j] :+ dzb[j]))
-        else             sum[j] = quadsum(dpdq :* X[,j])
+        if (dzbp[j])     sum[j] = quadsum(w:*(dq:*X[,j] :+ dzb[j]:*dzbX[,k--]))
+        else if (dzb[j]) sum[j] = quadsum(w:*(dq:*X[,j] :+ dzb[j]))
+        else             sum[j] = quadsum(wdq :* X[,j])
     }
     return(sum)
 }
 
-real rowvector __lnmor_IF_q_dzbX(real matrix X, real rowvector b,
-    string scalar m)
+`RR' _get_dzbp(`RR' b, `SR' x)
 {
-    real scalar      j
-    string scalar    el
-    string rowvector x
-    real rowvector   p
+    `RS' j
+    `SS' el
+    `RR' p
     
-    x = st_matrixcolstripe(m)[,2]'
     p = J(1, j = cols(b), 0)
     for (;j;j--) {
         if (!b[j]) continue
@@ -1691,51 +1865,62 @@ real rowvector __lnmor_IF_q_dzbX(real matrix X, real rowvector b,
         x[j] = el
         p[j] = 1
     }
-    if (any(p)) st_view(X, ., select(x, p))
-    else        X = J(0,0,.)
     return(p)
 }
 
-void __lnmor_finalize_IF()
+`RS' _dx_avg(`RC' b, `SS' levls, `RS' vce, `RS' W, `RM' IF,
+    `SS' tvar, `SS' subuse, `RC' S)
 {
-    real scalar    cons
-    real colvector p, w
-    real matrix    X, G, IF
+    `RS' j
+    `RC' T, p
+    `RM' L
     
-    cons = st_local("nocons")==""
-    w = st_local("wvar")!="" ? st_data(., st_local("wvar")) : 1
-    st_view(X=., ., st_local("term"))
-    p = st_data(., st_local("PS"))
-    G = quadcross(X,cons, w:*p:*(1:-p), X, cons)
-    if (cons) G = invsym(G, cols(X)+1) // swap _cons last
+    L = st_matrix(levls)
+    if (vce) {
+        st_view(T=., ., tvar, subuse)
+        p = L[,2]' / W
+        IF = IF :* p
+        for (j=rows(L); j; j--) {
+            IF[S,j] = IF[S,j] + (((T:==L[j,1]) :- p[j]) :* b[j]) / W
+        }
+        st_store(., st_local("ifs"), rowsum(IF))
+    }
+    return(mean(b, L[,2]))
+}
+
+void _IF_fl_finalize(`RS' k, `RS' cons, `SS' subuse)
+{
+    `RS' i, W
+    `RC' pi, w, T
+    `RM' t, h, G, L, IF
+    
+    // obtain G from fraclogit
+    t  = st_data((1,k), st_local("term"))
+    pi = st_data((1,k), st_local("vtmp"))
+    w  = st_data((1,k), st_local("W"))
+    G = quadcross(t,cons, w:*pi:*(1:-pi), t, cons)
+    if (cons) G = invsym(G, cols(G)) // swap _cons last
     else      G = invsym(G)
-    p = st_data(., st_local("Y")) - p  // Y - p
-    st_view(IF=., ., st_local("ifs"))
-    IF[.,.] = ((X:*p, J(1,cons,p)) + IF) * G'
-}
-
-void __lnmor_dx_IF()
-{
-    real scalar p, q
-    real matrix IF
-    
-    q  = st_numscalar(st_local("qbar"))
-    p  = st_numscalar(st_local("pbar"))
-    IF = __lnmor_IF_p(1)
-    st_store(., st_local("ifvar"), (1 / (p*(1-p))) * (IF[,2] +
-        (q*(2*p-1)/(p*(1-p))) * IF[,1]))
-}
-
-void __lnmor_dc_IF(real scalar h)
-{
-    real scalar    p, sign
-    real colvector IF
-    
-    sign = st_local("j")!=st_local("np") ? -1 : 1
-    p    = st_numscalar(st_local("pbar"))
-    st_view(IF=., ., st_local("ifvar"))
-    IF[.,.] = IF + __lnmor_IF_p(0) / (sign * h * p * (1 - p))
+    // balanced treatment levels (group sizes are fixed)
+    if (0) {
+        st_view(IF=., ., st_local("ifs"))
+        IF[.,.] = IF * G'
+        return
+    }
+    // unbalanced: add IFs of group sizes
+    h = st_data((1,k), st_local("P")) - pi
+    h = t:*h, J(1, cons, h)
+    W = st_numscalar(st_local("sum_w"))
+    L = st_matrix(st_local("levels"))
+    T = st_data(., st_local("name0"), subuse)
+    st_view(IF=., ., st_local("ifs"), subuse)
+    for (i=k;i;i--) {
+        IF[.,.] = IF + ((T:==L[i,1]) :- L[i,2]/W) * h[i,]
+    }
+    if (subuse!="") {
+        st_view(IF=., ., st_local("ifs"))
+    }
+    IF[.,.] = IF * G'
 }
 
 end
-
