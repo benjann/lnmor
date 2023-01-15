@@ -23,6 +23,9 @@ to install `moremata`.
 
 Main changes:
 
+    15jan2023 (version 1.1.4)
+    - minor changes in how data is handled when enumerating predictions
+
     13jan2023 (version 1.1.3)
     - new subsample() option to evaluate the marginal odds ratio over a subsample
       of the data only; use this option, for example, to obtain an ATET equivalent
