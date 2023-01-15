@@ -1,4 +1,4 @@
-*! version 1.1.3  13jan2023  Ben Jann
+*! version 1.1.4  15jan2023  Ben Jann
 
 program lnmor, properties(or)
     version 15
@@ -1193,7 +1193,8 @@ program Estimate_fl, rclass
     // compute predictions and prepare IFs
     tempvar name0 vtmp
     rename `name' `name0'
-    qui gen double `name' = .
+    qui gen `:type `name0'' `name' = `name0' /* copy values so that st_view()
+        will not get confused if the treatment is a factor variable */
     tempvar P W T
     qui gen double `P' = .
     qui gen double `W' = .
@@ -1275,7 +1276,7 @@ program Estimate_dx, rclass
     tempname b
     tempvar name0 vtmp
     rename `name' `name0'
-    qui gen double `name' = .
+    qui gen double `name' = `name0'
     mata: Estimate_dx(`k', `vce', "`subuse'")
     drop `name'
     rename `name0' `name'
@@ -1306,7 +1307,7 @@ program Estimate_dc, rclass
     tempname b
     tempvar name0 vtmp
     rename `name' `name0'
-    qui gen double `name' = .
+    qui gen double `name' = `name0'
     mata: Estimate_dc(`k', `vce', "`subuse'")
     drop `name'
     rename `name0' `name'
@@ -1539,10 +1540,16 @@ void Estimate_fl(`RS' k, `RS' vce, `SS' subuse)
         mcons = st_local("mcons")!="0"
         mvars = st_local("mvars")
         mfv   = st_local("mfv")=="1" // tvar is factor variable in model
-        if (!mfv) st_view(X=., ., mvars, subuse)
         st_view(mIF=., ., st_local("mifs"))
         if (subuse!="") S = selectindex(st_data(.,subuse)) // subsample index
         else            S = .
+        if (!mfv) st_view(X=., ., mvars, subuse)
+        else {
+            // in case of factor-variable treatment, first create view based
+            // on full sample to prevent columns from being flagged as omitted
+            st_view(X=., ., mvars)
+            if (subuse!="") st_subview(X, X, S, .)
+        }
         st_view(IF=., ., st_local("ifs"))
     }
     // generate predictions
@@ -1555,12 +1562,9 @@ void Estimate_fl(`RS' k, `RS' vce, `SS' subuse)
             if (probit) dp = normalden(invnormal(p))
             else        dp = p :* (1 :- p)
             if (w!=1)   dp = w :* dp
-            if (mfv) st_view(X=., ., mvars, subuse) /* modifications of factor
-                variables do not propagate into a view; need to rebuild the
-                view in each round */
             IF[.,.] = IF +
-                _IF_p(S, pbar, p, dp, X, mIF, mcons, ., .z) / W *
-                (L[i,2] * (st_data(1, st_local("term")), J(1,cons,1)))
+                _IF_p(S, pbar, p, dp, X, mIF, mcons, ., .z)  *
+                (L[i,2]/W * (st_data(1, st_local("term")), J(1,cons,1)))
         }
         _progress_dot(dots)
     }
