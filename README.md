@@ -5,7 +5,7 @@ Stata module to compute marginal odds ratios after model estimation
 using G-computation. `lnmor` works by applying fractional logit to averaged
 counterfactual predictions from the original model.
 
-For methods and formulas see [(Jann and Karlson (2023)](https://ideas.repec.org/p/bss/wpaper/44.html).
+For methods and formulas see [Jann and Karlson (2023)](https://ideas.repec.org/p/bss/wpaper/44.html).
 
 ---
 
