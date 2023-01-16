@@ -1,4 +1,4 @@
-*! version 1.1.4  15jan2023  Ben Jann
+*! version 1.1.5  16jan2023  Ben Jann
 
 program lnmor, properties(or)
     version 15
@@ -194,7 +194,7 @@ program _parse_opts
         exit
     }
     // check for vce(bootstrap) or vce(jackknife)
-    _parse_opts_vce, `vce' // returns prefix
+    _parse_opts_vce, `vce' // returns prefix vcelevel
     if "`prefix'"=="" {
         if `"`e(cmd)'"'=="lnmor" {
             // results in memory are from lnmor; must refit the original model
@@ -216,13 +216,15 @@ program _parse_opts
         di as err "{bf:vce(`prefix')} not allowed with {bf:fweight}s"
         exit 198
     }
+    _parse_diopts_level, `diopts' // returns level diopts
+    if `"`vcelevel'"'!="" local level `vcelevel' // vcelevel takes precedence
     if "`prefix'"=="jackknife" local ropts jkopts
     else                       local ropts bootopts
     _parse_estcmd 1 `cmdline' // returns estcmd
     c_local 00 _vce_parserun lnmor, noeqlist wtypes(pw iw)/*
         */ `ropts'(noheader notable force):/*
-        */ `estcmd' `vce' _lnmor(`lhs', post nose `options')
-    c_local diopts `diopts'
+        */ `estcmd' `vce' `level' _lnmor(`lhs', post nose `options')
+    c_local diopts `level' `diopts'
     c_local prefix "`prefix'"
 end
 
@@ -244,9 +246,9 @@ program _parse_miopts
     c_local options `options'
 end
 
-program _parse_estcmd // remove or; possibly remove vce, cluster, robust
+program _parse_estcmd // remove or; possibly remove vce, cluster, robust, level
     gettoken remove 0 : 0
-    if `remove' local rmopts or vce(passthru) CLuster(passthru) Robust
+    if `remove' local rmopts or vce(passthru) CLuster(passthru) Robust Level(passthru)
     else        local rmopts or
     _parse comma lhs 0 : 0
     syntax [, `rmopts' * ]
@@ -255,11 +257,19 @@ end
 
 program _parse_opts_vce
     syntax [, vce(str) ]
-    gettoken v : vce, parse(", ")
+    _parse comma v 0 : vce
+    syntax [, Level(passthru) * ]
     local l = strlen(`"`v'"')
     if      `"`v'"'==substr("bootstrap",1,max(4,`l')) local prefix bootstrap
     else if `"`v'"'==substr("jackknife",1,max(4,`l')) local prefix jackknife
     c_local prefix `prefix'
+    c_local vcelevel `level'
+end
+
+program _parse_diopts_level
+    syntax [, Level(passthru) * ]
+    c_local level `level'
+    c_local diopts `options'
 end
 
 program _check_source_model

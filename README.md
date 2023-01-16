@@ -25,6 +25,9 @@ to install `moremata`.
 
 Main changes:
 
+    16jan2023 (version 1.1.5)
+    - vce(bootstrap) and vce(jackknife) did not pick up level(); this is fixed
+
     15jan2023 (version 1.1.4)
     - minor changes in how data is handled when enumerating predictions
 
